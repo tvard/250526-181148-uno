@@ -257,7 +257,7 @@ void manualMode() {
     buzzerEnabled = false;
   }
 
-  return; // disable motors => remove to enable
+  // return; // disable motors => remove to enable
 
   // Set motor speeds
   setMotorSpeeds(leftSpeed, rightSpeed);
