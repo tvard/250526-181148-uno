@@ -3,15 +3,15 @@
 #include "I2Cdev.h"
 #include <RH_ASK.h> // Include the RadioHead library
 #include <SPI.h>    // Include the SPI library (required for RadioHead)
-#include "MPU9250.h"
+#include "MPU6050.h" // Changed to MPU6050 library which is more stable
 
 // Pin Definitions
 #define LEFT_MOTOR_IN1 1    // L293D In1 (pin 2)
 #define LEFT_MOTOR_IN2 2    // L293D In2 (pin 7)
 #define RIGHT_MOTOR_IN3 3   // L293D In3 (pin 10)
 #define RIGHT_MOTOR_IN4 4   // L293D In4 (pin 15)
-#define LEFT_MOTOR_EN 5     // L293D Enable1 (pin 1)
-#define RIGHT_MOTOR_EN 6    // L293D Enable2 (pin 9)
+#define LEFT_MOTOR_EN 3     // L293D Enable1 (pin 1)
+#define RIGHT_MOTOR_EN 9    // L293D Enable2 (pin 9)
 
 #define CS_PIN 7
 #define BUZZER_PIN 10       // Active buzzer (as suggested)
@@ -24,8 +24,6 @@
 #define MIN_DISTANCE 30     // Minimum distance in cm before turning
 #define TURN_TIME 800       // Time to turn in milliseconds
 #define SCAN_INTERVAL 300   // Time between distance measurements
-
-const bool DISABLE_MOTORS = false; // Set to true to disable motors for testing
 
 // Initialize the RH_ASK driver
 // RH_ASK(speed, receive_pin, transmit_pin, ptt_pin, ptt_inverted)
@@ -51,8 +49,8 @@ int joystickX = 512;        // Center position (range: 0-1023)
 int joystickY = 512;        // Center position (range: 0-1023)
 bool joystickButton = false;
 
-// IMU setup - Using correct bolderflight/MPU9250 library
-MPU9250 IMU(Wire, 0x68);
+// IMU setup - Using MPU6050 library (compatible with MPU6500/9250)
+MPU6050 mpu;
 
 float ax, ay, az;
 float gx, gy, gz;
@@ -101,36 +99,76 @@ void setup() {
   // Initialize buzzer
   pinMode(BUZZER_PIN, OUTPUT);
 
-  // Initialize IMU - Using correct bolderflight/MPU9250 library functions
+  // Initialize IMU - Using MPU6050 library (works with MPU6500/9250)
   Wire.begin();
   Wire.setClock(100000); // Start with slower I2C speed (100kHz)
 
-  delay(500);
+  delay(500); // Longer delay for MPU to stabilize
 
   Serial.println("Starting I2C bus...");
-
-  // Initialize the MPU9250 sensor
-  int status = IMU.begin();
-  if (status < 0) {
-    Serial.println("IMU initialization unsuccessful");
-    Serial.println("Check IMU wiring or try cycling power");
-    Serial.print("Status: ");
-    Serial.println(status);
-    // Error tone - long beep
-    beep(1000);
+  
+  // Scan for I2C devices first
+  Serial.println("Scanning for I2C devices...");
+  byte error, address;
+  int deviceCount = 0;
+  
+  for(address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address < 16) Serial.print("0");
+      Serial.print(address, HEX);
+      Serial.println();
+      deviceCount++;
+    }
+  }
+  
+  if (deviceCount == 0) {
+    Serial.println("No I2C devices found!");
   } else {
-    Serial.println("Connected to IMU!");
+    Serial.print("Found ");
+    Serial.print(deviceCount);
+    Serial.println(" I2C device(s)");
+  }
+
+  // Initialize MPU6050/6500/9250
+  Serial.println("Initializing MPU...");
+  mpu.initialize();
+  
+  delay(100);
+  
+  // Test connection
+  if (mpu.testConnection()) {
+    Serial.println("MPU connection successful!");
     
-    // Set the sample rate divider for approximately 100 Hz
-    // The gyro and accelerometer sample at 1 kHz, so this gives ~100 Hz
-    IMU.setGyroRange(MPU9250::GYRO_RANGE_500DPS);
-    IMU.setAccelRange(MPU9250::ACCEL_RANGE_4G);
-    IMU.setDlpfBandwidth(MPU9250::DLPF_BANDWIDTH_41HZ);
-    IMU.setSrd(9); // Sample Rate Divider: 1000/(1+SRD) Hz, so 1000/10 = 100 Hz
+    // Configure similar to your working setup
+    // Set sample rate divider for 100 Hz (similar to your ConfigSrd)
+    mpu.setRate(9); // rate = 1000/(1+9) = 100Hz
     
-    Serial.println("IMU configured successfully");
+    // Set accelerometer range
+    mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4); // ±4g
+    
+    // Set gyroscope range  
+    mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500); // ±500°/s
+    
+    // Set digital low pass filter
+    mpu.setDLPFMode(MPU6050_DLPF_BW_42); // 42Hz bandwidth
+    
+    Serial.print("Sample rate set to: ");
+    Serial.print((int)(1000 / (9 + 1)));
+    Serial.println(" Hz");
+    
+    Serial.println("MPU configured successfully");
     // Short beep to indicate successful initialization
     beep(100);
+    
+  } else {
+    Serial.println("MPU connection failed!");
+    Serial.println("Check wiring and power supply");
+    // Error tone - long beep
+    beep(1000);
   }
 
   // Stop all motors initially
@@ -219,10 +257,7 @@ void manualMode() {
     buzzerEnabled = false;
   }
 
-  
-  if (DISABLE_MOTORS){
-    return; // If motors are disabled, skip setting speeds
-  }
+  return; // disable motors => remove to enable
 
   // Set motor speeds
   setMotorSpeeds(leftSpeed, rightSpeed);
@@ -292,18 +327,25 @@ void autonomousMode() {
 }
 
 void readIMU() {
-  // Read the sensor - this updates all sensor data
-  IMU.readSensor();
+  // Read the sensor values (similar to your working approach)
+  
+  // Get accelerometer values (in g's, convert to m/s²)
+  int16_t ax_raw, ay_raw, az_raw;
+  mpu.getAcceleration(&ax_raw, &ay_raw, &az_raw);
+  
+  // Convert to m/s² (assuming ±4g range: 32768 = 4g = 39.24 m/s²)
+  ax = (float)ax_raw / 32768.0 * 4.0 * 9.81;
+  ay = (float)ay_raw / 32768.0 * 4.0 * 9.81;
+  az = (float)az_raw / 32768.0 * 4.0 * 9.81;
 
-  // Get accelerometer values (in m/s^2)
-  ax = IMU.getAccelX_mss();
-  ay = IMU.getAccelY_mss();
-  az = IMU.getAccelZ_mss();
-
-  // Get gyroscope values (in rad/s)
-  gx = IMU.getGyroX_rads();
-  gy = IMU.getGyroY_rads();
-  gz = IMU.getGyroZ_rads();
+  // Get gyroscope values (in degrees/s, convert to rad/s)
+  int16_t gx_raw, gy_raw, gz_raw;
+  mpu.getRotation(&gx_raw, &gy_raw, &gz_raw);
+  
+  // Convert to rad/s (assuming ±500°/s range: 32768 = 500°/s)
+  gx = (float)gx_raw / 32768.0 * 500.0 * PI / 180.0;
+  gy = (float)gy_raw / 32768.0 * 500.0 * PI / 180.0;
+  gz = (float)gz_raw / 32768.0 * 500.0 * PI / 180.0;
 
   // Print IMU values for debugging (can be removed in final code)
   // You might want to print these less frequently or on demand
