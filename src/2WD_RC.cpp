@@ -10,8 +10,8 @@
 #define LEFT_MOTOR_IN2 2    // L293D In2 (pin 7)
 #define RIGHT_MOTOR_IN3 3   // L293D In3 (pin 10)
 #define RIGHT_MOTOR_IN4 4   // L293D In4 (pin 15)
-#define LEFT_MOTOR_EN 3     // L293D Enable1 (pin 1)
-#define RIGHT_MOTOR_EN 9    // L293D Enable2 (pin 9)
+#define LEFT_MOTOR_EN 5     // L293D Enable1 (pin 1)
+#define RIGHT_MOTOR_EN 6    // L293D Enable2 (pin 9)
 
 #define CS_PIN 7
 #define BUZZER_PIN 10       // Active buzzer (as suggested)
@@ -180,7 +180,7 @@ void setup() {
 void loop() {
   // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
-  delay(50);
+  delay(25);
   // // Control based on current mode
   // if (autoMode) {
   //   autonomousMode();
