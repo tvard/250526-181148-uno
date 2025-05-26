@@ -10,8 +10,8 @@
 #define LEFT_MOTOR_IN2 2    // L293D In2 (pin 7)
 #define RIGHT_MOTOR_IN3 3   // L293D In3 (pin 10)
 #define RIGHT_MOTOR_IN4 4   // L293D In4 (pin 15)
-#define LEFT_MOTOR_EN 3     // L293D Enable1 (pin 1)
-#define RIGHT_MOTOR_EN 9    // L293D Enable2 (pin 9)
+#define LEFT_MOTOR_EN 5     // L293D Enable1 (pin 1)
+#define RIGHT_MOTOR_EN 6    // L293D Enable2 (pin 9)
 
 #define CS_PIN 7
 #define BUZZER_PIN 10       // Active buzzer (as suggested)
@@ -24,6 +24,8 @@
 #define MIN_DISTANCE 30     // Minimum distance in cm before turning
 #define TURN_TIME 800       // Time to turn in milliseconds
 #define SCAN_INTERVAL 300   // Time between distance measurements
+
+const bool DISABLE_MOTORS = false; // Set to true to disable motors for testing
 
 // Initialize the RH_ASK driver
 // RH_ASK(speed, receive_pin, transmit_pin, ptt_pin, ptt_inverted)
@@ -101,9 +103,9 @@ void setup() {
 
   // Initialize IMU - Using correct bolderflight/MPU9250 library functions
   Wire.begin();
-  Wire.setClock(400000);
+  Wire.setClock(100000); // Start with slower I2C speed (100kHz)
 
-  delay(100);
+  delay(500);
 
   Serial.println("Starting I2C bus...");
 
@@ -217,7 +219,10 @@ void manualMode() {
     buzzerEnabled = false;
   }
 
-  return; // disable motors => remove to enable
+  
+  if (DISABLE_MOTORS){
+    return; // If motors are disabled, skip setting speeds
+  }
 
   // Set motor speeds
   setMotorSpeeds(leftSpeed, rightSpeed);
