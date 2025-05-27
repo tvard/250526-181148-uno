@@ -6,10 +6,10 @@
 #include "MPU6050.h" // Changed to MPU6050 library which is more stable
 
 // Pin Definitions
-#define LEFT_MOTOR_IN1 1    // L293D In1 (pin 2)
-#define LEFT_MOTOR_IN2 2    // L293D In2 (pin 7)
-#define RIGHT_MOTOR_IN3 3   // L293D In3 (pin 10)
-#define RIGHT_MOTOR_IN4 4   // L293D In4 (pin 15)
+#define LEFT_MOTOR_IN1 2    // L293D In1 (pin 2)
+#define LEFT_MOTOR_IN2 3    // L293D In2 (pin 7)
+#define RIGHT_MOTOR_IN3 4   // L293D In3 (pin 10)
+#define RIGHT_MOTOR_IN4 7   // L293D In4 (pin 15)
 #define LEFT_MOTOR_EN 5     // L293D Enable1 (pin 1)
 #define RIGHT_MOTOR_EN 6    // L293D Enable2 (pin 9)
 
@@ -24,6 +24,8 @@
 #define MIN_DISTANCE 30     // Minimum distance in cm before turning
 #define TURN_TIME 800       // Time to turn in milliseconds
 #define SCAN_INTERVAL 300   // Time between distance measurements
+
+const int LOOP_DELAY_MS = 50;
 
 // Initialize the RH_ASK driver
 // RH_ASK(speed, receive_pin, transmit_pin, ptt_pin, ptt_inverted)
@@ -67,7 +69,7 @@ void turnLeft(int angle);
 void turnRight(int angle);
 void beep(int duration);
 void beepPattern(int beeps, int beepDuration);
-void readRFSignals(); // Added prototype
+bool readRFSignals(); // Added prototype
 
 void setup() {
   // Initialize serial communication for debugging
@@ -180,7 +182,7 @@ void setup() {
 void loop() {
   // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
-  delay(25);
+  delay(LOOP_DELAY_MS);
   // // Control based on current mode
   // if (autoMode) {
   //   autonomousMode();
@@ -220,51 +222,97 @@ void checkModeButton() {
 
 void manualMode() {
   // Read and interpret RF signals from the receiver
-  readRFSignals();
-  // Map joystick values to motor speeds
+  bool isRead = readRFSignals();
+  // Invert joystick axes to correct orientation
+  int correctedX = 1023 - joystickY; // X increases rightwards
+  int correctedY = 1023 - joystickX; // Y increases upwards
+
   int leftSpeed = 0;
   int rightSpeed = 0;
+  static int rfLostCounter = 0; // Counter for lost RF signals
 
-  // Forward/backward control (Y-axis)
-  if (joystickY > 550) { // Forward
-    int speed = map(joystickY, 550, 1023, 0, MAX_SPEED);
+  if (isRead)
+  {
+  // Global variables (declare these outside your loop)
+  static int targetLeftSpeed = 0, targetRightSpeed = 0;
+  static int currentLeftSpeed = 0, currentRightSpeed = 0;
+  static float smoothingFactor = 0.15;
+
+  // In your main loop:
+  // 1. First calculate base forward/backward speeds
+  if (correctedY > 550) { // Forward
+    int speed = map(correctedY, 550, 1023, 0, MAX_SPEED);
     leftSpeed = speed;
     rightSpeed = speed;
-  } else if (joystickY < 470) { // Backward
-    int speed = map(joystickY, 470, 0, 0, MAX_SPEED);
+  } else if (correctedY < 470) { // Backward
+    int speed = map(correctedY, 470, 0, 0, MAX_SPEED);
     leftSpeed = -speed;
     rightSpeed = -speed;
   }
 
-  // Left/right steering adjustment (X-axis)
-  // Tank steering - adjust relative speeds of wheels
-  if (joystickX > 550) { // Right turn
-    int adjustment = map(joystickX, 550, 1023, 0, MAX_SPEED);
+  // 2. Then apply steering adjustments
+  float forwardBackward = abs(correctedY - 512) / 511.0;
+  float steeringScale = 1.0 - 0.6 * pow(forwardBackward, 1.5);
+
+  if (correctedX > 550) { // Right turn
+    int adjustment = map(correctedX, 550, 1023, 0, MAX_SPEED * steeringScale);
     rightSpeed -= adjustment;
-    leftSpeed += adjustment / 2; // Adjusted this to be more balanced for turning
-  } else if (joystickX < 470) { // Left turn
-    int adjustment = map(joystickX, 470, 0, 0, MAX_SPEED);
+    leftSpeed += adjustment * 0.3;
+  } else if (correctedX < 470) { // Left turn
+    int adjustment = map(correctedX, 470, 0, 0, MAX_SPEED * steeringScale);
     leftSpeed -= adjustment;
-    rightSpeed += adjustment / 2; // Adjusted this to be more balanced for turning
+    rightSpeed += adjustment * 0.3;
   }
 
-  // Check if joystick button is pressed to activate buzzer
-  if (joystickButton && !buzzerEnabled) {
-    digitalWrite(BUZZER_PIN, HIGH);
-    buzzerEnabled = true;
-  } else if (!joystickButton && buzzerEnabled) {
-    digitalWrite(BUZZER_PIN, LOW);
-    buzzerEnabled = false;
+  // 3. Finally apply smoothing to the calculated target speeds
+  targetLeftSpeed = leftSpeed;
+  targetRightSpeed = rightSpeed;
+
+  currentLeftSpeed += (targetLeftSpeed - currentLeftSpeed) * smoothingFactor;
+  currentRightSpeed += (targetRightSpeed - currentRightSpeed) * smoothingFactor;
+
+  // 4. Use the smoothed speeds for your motors
+  leftSpeed = currentLeftSpeed;
+  rightSpeed = currentRightSpeed;
+
+
+    Serial.print(" ");
+    Serial.print("Corr X: ");
+    Serial.print(correctedX);
+    Serial.print(" | ");
+    Serial.print("Corr Y: ");
+    Serial.print(correctedY);
+
+    Serial.print(" ");
+    Serial.print("L Spd: ");
+    Serial.print(leftSpeed);
+    Serial.print(" | ");
+    Serial.print("R Spd: ");
+    Serial.println(rightSpeed); 
+    setMotorSpeeds(leftSpeed, rightSpeed);
+    rfLostCounter = 0; // Reset counter if RF signal is received
+  }
+  else 
+  {
+     if(rfLostCounter++ * LOOP_DELAY_MS > 500) {
+        setMotorSpeeds(0, 0); // Stop motors if no RF signal for (n)ms
+        rfLostCounter = 0; // Reset counter to avoid overflow
+     }
   }
 
-  // return; // disable motors => remove to enable
+    // Check if joystick button is pressed to activate buzzer
+    if (joystickButton && !buzzerEnabled) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      buzzerEnabled = true;
+    } else if (!joystickButton && buzzerEnabled) {
+      digitalWrite(BUZZER_PIN, LOW);
+      buzzerEnabled = false;
+    }
 
-  // Set motor speeds
-  setMotorSpeeds(leftSpeed, rightSpeed);
 }
 
 // *** MODIFIED readRFSignals FUNCTION ***
-void readRFSignals() {
+bool readRFSignals() {
   JoystickData receivedData; // Create a struct to hold the received data
   uint8_t len = sizeof(receivedData); // Set the expected length of the struct
 
@@ -280,8 +328,12 @@ void readRFSignals() {
     Serial.print(", Y=");
     Serial.print(joystickY);
     Serial.print(", Button=");
-    Serial.println(joystickButton ? "Pressed" : "Released");
+    Serial.print(joystickButton ? "Pressed" : "Released");
+
+    return true;
   }
+
+  return false;
 }
 // *** END OF MODIFIED readRFSignals FUNCTION ***
 
