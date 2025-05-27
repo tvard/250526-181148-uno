@@ -233,48 +233,30 @@ void manualMode() {
 
   if (isRead)
   {
-  // Global variables (declare these outside your loop)
-  static int targetLeftSpeed = 0, targetRightSpeed = 0;
-  static int currentLeftSpeed = 0, currentRightSpeed = 0;
-  static float smoothingFactor = 0.15;
+    // Forward/backward control (Y-axis)
+    if (correctedY > 550) { // Forward
+      int speed = map(correctedY, 550, 1023, 0, MAX_SPEED);
+      leftSpeed = speed;
+      rightSpeed = speed;
+    } else if (correctedY < 470) { // Backward
+      int speed = map(correctedY, 470, 0, 0, MAX_SPEED);
+      leftSpeed = -speed;
+      rightSpeed = -speed;
+    }
 
-  // In your main loop:
-  // 1. First calculate base forward/backward speeds
-  if (correctedY > 550) { // Forward
-    int speed = map(correctedY, 550, 1023, 0, MAX_SPEED);
-    leftSpeed = speed;
-    rightSpeed = speed;
-  } else if (correctedY < 470) { // Backward
-    int speed = map(correctedY, 470, 0, 0, MAX_SPEED);
-    leftSpeed = -speed;
-    rightSpeed = -speed;
-  }
+    // Left/right steering adjustment (X-axis) with reduced sensitivity at high speed
+    float forwardBackward = abs(correctedY - 512) / 511.0; // 0 (center) to 1 (full forward/back)
+    float steeringScale = 1.0 - 0.9 * forwardBackward; // Reduce steering effect even more as speed increases
 
-  // 2. Then apply steering adjustments
-  float forwardBackward = abs(correctedY - 512) / 511.0;
-  float steeringScale = 1.0 - 0.6 * pow(forwardBackward, 1.5);
-
-  if (correctedX > 550) { // Right turn
-    int adjustment = map(correctedX, 550, 1023, 0, MAX_SPEED * steeringScale);
-    rightSpeed -= adjustment;
-    leftSpeed += adjustment * 0.3;
-  } else if (correctedX < 470) { // Left turn
-    int adjustment = map(correctedX, 470, 0, 0, MAX_SPEED * steeringScale);
-    leftSpeed -= adjustment;
-    rightSpeed += adjustment * 0.3;
-  }
-
-  // 3. Finally apply smoothing to the calculated target speeds
-  targetLeftSpeed = leftSpeed;
-  targetRightSpeed = rightSpeed;
-
-  currentLeftSpeed += (targetLeftSpeed - currentLeftSpeed) * smoothingFactor;
-  currentRightSpeed += (targetRightSpeed - currentRightSpeed) * smoothingFactor;
-
-  // 4. Use the smoothed speeds for your motors
-  leftSpeed = currentLeftSpeed;
-  rightSpeed = currentRightSpeed;
-
+    if (correctedX > 550) { // Right turn
+      int adjustment = map(correctedX, 550, 1023, 0, MAX_SPEED * steeringScale);
+      rightSpeed -= adjustment;
+      leftSpeed += adjustment / 2;
+    } else if (correctedX < 470) { // Left turn
+      int adjustment = map(correctedX, 470, 0, 0, MAX_SPEED * steeringScale);
+      leftSpeed -= adjustment;
+      rightSpeed += adjustment / 2;
+    }
 
     Serial.print(" ");
     Serial.print("Corr X: ");
