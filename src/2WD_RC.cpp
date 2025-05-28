@@ -27,10 +27,10 @@
 
 const int LOOP_DELAY_MS = 50;
 
-// Initialize the RH_ASK driver
-// RH_ASK(speed, receive_pin, transmit_pin, ptt_pin, ptt_inverted)
-// For a receiver-only sketch, only receive_pin is strictly necessary.
-RH_ASK rf_driver(1000); // Changed speed to 2000, common default, match your transmitter's actual speed.
+// Initialize the RH_ASK driver - FM 433 MHz
+// default: 2000 bps - must match transmitter speed
+// slower = better range, but less responsive
+RH_ASK rf_driver(500); 
 
 // Structure for joystick data - MUST MATCH THE TRANSMITTER EXACTLY
 struct JoystickData {
@@ -233,10 +233,6 @@ void manualMode() {
 
   if (isRead)
   {
-  // Global variables (declare these outside your loop)
-  static int targetLeftSpeed = 0, targetRightSpeed = 0;
-  static int currentLeftSpeed = 0, currentRightSpeed = 0;
-  static float smoothingFactor = 0.5; 
 
   // In your main loop:
   // 1. First calculate base forward/backward speeds
@@ -250,30 +246,56 @@ void manualMode() {
     rightSpeed = -speed;
   }
 
-  // 2. Then apply steering adjustments
-  float forwardBackward = abs(correctedY - 512) / 511.0;
-  float steeringScale = 1.0 - 0.6 * pow(forwardBackward, 1.5);
 
-  if (correctedX > 550) { // Right turn
-    int adjustment = map(correctedX, 550, 1023, 0, MAX_SPEED * steeringScale);
-    rightSpeed -= adjustment;
-    leftSpeed += adjustment * 0.3;
-  } else if (correctedX < 470) { // Left turn
-    int adjustment = map(correctedX, 470, 0, 0, MAX_SPEED * steeringScale);
+  // Smooth speed control variables 
+  static int targetLeftSpeed = 0, targetRightSpeed = 0;
+  static int currentLeftSpeed = 0, currentRightSpeed = 0;
+  static float leftSpeedOffset = 0.0, rightSpeedOffset = 0.05;      // for balance in % as a dec, adjust as needed
+  static float smoothingFactor = 0.66;                              // lower values will smooth more
+
+  // 2. Then apply steering adjustments
+  // Implement a bigger deadzone for correctedX (e.g., ±(n) on the x-axis)
+  const int DEADZONE = 80;
+  const int steeringImpact = 0.25;        // Steering impact factor, adjust as needed, smaller values = less impact
+  const int steeringScalingFactor = 0.5;  // Scale the steering impact, adjust as needed, smaller values = less scaling
+
+  float forwardBackward = abs(correctedY - 512) / 511.0;
+  float steeringScale = 1.0 - steeringScalingFactor * pow(forwardBackward, 1.5); 
+
+  if (correctedX > 512 + DEADZONE) { // Right turn
+    int adjustment = map(correctedX, 512 + DEADZONE, 1023, 0, MAX_SPEED * steeringScale);
     leftSpeed -= adjustment;
-    rightSpeed += adjustment * 0.3;
+    rightSpeed += adjustment * steeringImpact; 
+  } else if (correctedX < 512 - DEADZONE) { // Left turn
+    int adjustment = map(correctedX, 512 - DEADZONE, 0, 0, MAX_SPEED * steeringScale);
+    rightSpeed -= adjustment;
+    leftSpeed += adjustment * steeringImpact; 
   }
 
   // 3. Finally apply smoothing to the calculated target speeds
   targetLeftSpeed = leftSpeed;
   targetRightSpeed = rightSpeed;
 
-  currentLeftSpeed += (targetLeftSpeed - currentLeftSpeed) * smoothingFactor;
-  currentRightSpeed += (targetRightSpeed - currentRightSpeed) * smoothingFactor;
+  // Calculate the difference between left and right speeds as a percentage
+  float speedDiff = abs(targetLeftSpeed - targetRightSpeed);
+  float maxSpeedAbs = max(abs(targetLeftSpeed), abs(targetRightSpeed));
+  float diffPercent = (maxSpeedAbs > 0) ? (speedDiff / maxSpeedAbs) : 0.0; // less = more similar
+
+  // Determine smoothing factor based on forward/backward vs. turning
+  // If both wheels are similar (diff < 30%), use full smoothing
+  // If turning sharply (diff > 30%), reduce smoothing
+  float dynamicSmoothing = smoothingFactor;
+  if (diffPercent > 0.3) {
+    // Reduce smoothing for sharp turns, minimum 0.1
+    dynamicSmoothing = max(0.1, smoothingFactor * (1.0 - (diffPercent - 0.3) * 1.5));
+  }
+
+  currentLeftSpeed = currentLeftSpeed + (targetLeftSpeed - currentLeftSpeed) * dynamicSmoothing;
+  currentRightSpeed = currentRightSpeed + (targetRightSpeed - currentRightSpeed) * dynamicSmoothing;
 
   // 4. Use the smoothed speeds for your motors
-  leftSpeed = currentLeftSpeed;
-  rightSpeed = currentRightSpeed;
+  leftSpeed = currentLeftSpeed * (1 - leftSpeedOffset);
+  rightSpeed = currentRightSpeed * (1 - rightSpeedOffset);
 
 
     Serial.print(" ");
@@ -288,14 +310,15 @@ void manualMode() {
     Serial.print(leftSpeed);
     Serial.print(" | ");
     Serial.print("R Spd: ");
-    Serial.println(rightSpeed); 
+    Serial.println(rightSpeed);
+
     setMotorSpeeds(leftSpeed, rightSpeed);
     rfLostCounter = 0; // Reset counter if RF signal is received
   }
   else 
   {
-     if(rfLostCounter++ * LOOP_DELAY_MS > 500) {
-        setMotorSpeeds(0, 0); // Stop motors if no RF signal for (n)ms
+     if(rfLostCounter++ * LOOP_DELAY_MS > 330) {
+        setMotorSpeeds(leftSpeed / 2, rightSpeed / 2); // Stop motors semi-gradually if no RF signal for (n)ms
         rfLostCounter = 0; // Reset counter to avoid overflow
      }
   }
