@@ -8,7 +8,7 @@ const int JOY_BUTTON_PIN = 16;  // Joystick button
 // const int RF_DATA_PIN = 11;    // RFM69 CS (Chip Select) pin 
 
 // Create an instance of the rf_driver radio object, at a certain bps rate (slower = longer range, faster = less range)
-RH_ASK rf_driver(500); // Using pin 12 as RX (unused in transmitter) and RF_DATA_PIN as TX
+RH_ASK rf_driver(2000); // Using pin 12 as RX (unused in transmitter) and RF_DATA_PIN as TX
 
 // Define the structure for the data we want to send
 struct JoystickData {
