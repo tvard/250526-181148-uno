@@ -241,6 +241,9 @@ void checkModeButton()
   }
 }
 
+int leftRampUpSpeed = 0;
+int rightRampUpSpeed = 0;
+
 void manualMode()
 {
   // Read and interpret RF signals from the receiver
@@ -249,19 +252,32 @@ void manualMode()
   int correctedX = 1023 - joystickY; // X increases rightwards
   int correctedY = 1023 - joystickX; // Y increases upwards
 
-  int leftSpeed = 0;
-  int rightSpeed = 0;
+  static int leftSpeed = 0;
+  static int rightSpeed = 0;
   static int rfLostCounter = 0; // Counter for lost RF signals
 
   if (isRead)
   {
 
-    const int minMotorSpeed = 125; // Minimum speed to consider for movement
+    const int minMotorSpeed = 75; // Minimum speed to consider for movement
     const int joystickDeadzone = 100;
 
     // 1. First calculate base forward/backward speeds
     const int forwardThreshold = 550;  // Threshold for detecting forward movement based on joystick Y-axis value.
     const int backwardThreshold = 470; // Treshhold ... backward movement
+    
+    float ratioLR = (correctedX - 512) / 511.0; // Ratio of left/right speed based on X-axis position
+    float ratioFwdBwd = abs(correctedY - 512) / 511.0; 
+    bool isLowSpeed = abs(ratioFwdBwd) < 0.25;   // Low speed threshold
+
+    Serial.println(
+      String("Joystick: ") + joystickX +
+      " | " + joystickY +
+      " | Corr X: " + correctedX +
+      " | Corr Y: " + correctedY +
+      " | Ratio LR: " + ratioLR +
+      " | Ratio Fwd/Bwd: " + ratioFwdBwd
+    );
 
     if (correctedY > forwardThreshold)
     { // Forward
@@ -279,110 +295,28 @@ void manualMode()
       leftSpeed = -speed;
       rightSpeed = -speed;
     }
+    else if (isLowSpeed && abs(ratioLR) >= 0.5 && abs(correctedY - 512) < joystickDeadzone){
+      int speed = map(constrain(correctedY, 550, 1023), 550, 1023, 0, MAX_SPEED);
+      speed = constrain(speed, minMotorSpeed, MAX_SPEED); // Ensure speed is above minimum
+
+      leftSpeed = speed * (1.0 - ratioLR); // Reduce left speed based on X-axis position
+      rightSpeed = speed * (1.0 + ratioLR); // Increase right speed based on X-axis position  
+    }
     else
-    { // Stop if within deadzone
-      leftSpeed = 0;
-      rightSpeed = 0;
+    { // Stop if within deadzone (smoothly) => cuts off below (30% of max speed)
+      leftSpeed = (leftSpeed > (MAX_SPEED / 3)) ? (leftSpeed / 3) : 0;
+      rightSpeed = (rightSpeed > (MAX_SPEED / 3)) ? (rightSpeed / 3) : 0;
+
+      leftRampUpSpeed = 0, rightRampUpSpeed = 0;
     }
-
-
-    
-
-    // Smooth speed control variables
-    static int targetLeftSpeed = 0, targetRightSpeed = 0;
-    static int currentLeftSpeed = 0, currentRightSpeed = 0;
-    static float leftSpeedOffset = 0.0, rightSpeedOffset = 0.05; // for balance in % as a dec, adjust as needed
-    static float smoothingFactor = 0.66;                         // lower values will smooth more
-
-    // 2. Then apply steering adjustments
-    // Implement a bigger deadzone for correctedX (e.g., ±(n) on the x-axis)
-    const int steeringImpact = 0.75;          // Steering impact factor, adjust as needed, smaller values = more damping
-    const int steeringScalingFactor = 0.33;   // Scale the steering impact, adjust as needed, smaller values = less scaling
- 
-    float forwardBackward = abs(correctedY - 512) / 511.0; 
-    float steeringScale = 1.0 - steeringScalingFactor * pow(forwardBackward, 1.5); 
-
-    bool isLowSpeed = abs(forwardBackward) < 0.25;   // Low speed threshold
-
-    if (correctedX > 512 + joystickDeadzone)
-    { // Right turn
-
-      if (isLowSpeed){
-        leftSpeed = abs(leftSpeed);
-        rightSpeed = abs(rightSpeed);
-      }
-
-      int adjustment = map(correctedX, 512 + joystickDeadzone, 1023, 0, MAX_SPEED * steeringScale);
-      leftSpeed -= adjustment;
-      rightSpeed += adjustment * steeringImpact;
-
-      rightSpeed = constrain(rightSpeed, minMotorSpeed, MAX_SPEED);
-
-      if (isLowSpeed)
-      { // at lower speeds, sharp turning = pivot around center 
-        leftSpeed = -rightSpeed;
-      }
-    }
-    else if (correctedX < 512 - joystickDeadzone)
-    { // Left turn
-
-      if (isLowSpeed){
-        leftSpeed = abs(leftSpeed);
-        rightSpeed = abs(rightSpeed);
-      }
-
-      int adjustment = map(correctedX, 512 - joystickDeadzone, 0, 0, MAX_SPEED * steeringScale);
-      rightSpeed -= adjustment;
-      leftSpeed += adjustment * steeringImpact;
-
-      leftSpeed = constrain(leftSpeed, minMotorSpeed, MAX_SPEED);
-
-      if (isLowSpeed)
-      { // at lower speeds, sharp turning = pivot around center 
-        rightSpeed = -leftSpeed;
-      }
-    }
-
-    // 3. Finally apply smoothing to the calculated target speeds
-    targetLeftSpeed = leftSpeed;
-    targetRightSpeed = rightSpeed;
-
-    // Calculate the difference between left and right speeds as a percentage
-    float speedDiff = abs(targetLeftSpeed - targetRightSpeed);
-    float maxSpeedAbs = max(abs(targetLeftSpeed), abs(targetRightSpeed));
-    float diffPercent = (maxSpeedAbs > 0) ? (speedDiff / maxSpeedAbs) : 0.0; // less = more similar
-
-    // Determine smoothing factor based on forward/backward vs. turning
-    // If both wheels are similar (diff < 30%), use full smoothing
-    // If turning sharply (diff > 30%), reduce smoothing
-    float dynamicSmoothing = smoothingFactor;
-    if (diffPercent > 0.3)
-    {
-      // Reduce smoothing for sharp turns, minimum 0.1
-      dynamicSmoothing = max(0.1, smoothingFactor * (1.0 - (diffPercent - 0.3) * 1.5));
-    }
-
-    currentLeftSpeed = currentLeftSpeed + (targetLeftSpeed - currentLeftSpeed) * dynamicSmoothing;
-    currentRightSpeed = currentRightSpeed + (targetRightSpeed - currentRightSpeed) * dynamicSmoothing;
-
-    // 4. Use the smoothed speeds for your motors
-    leftSpeed = currentLeftSpeed * (1 - leftSpeedOffset);
-    rightSpeed = currentRightSpeed * (1 - rightSpeedOffset);
-
-    Serial.print(" ");
-    Serial.print("Corr X: ");
-    Serial.print(correctedX);
-    Serial.print(" | ");
-    Serial.print("Corr Y: ");
-    Serial.print(correctedY);
-
+  
     Serial.print(" ");
     Serial.print("L Spd: ");
     Serial.print(leftSpeed);
     Serial.print(" | ");
     Serial.print("R Spd: ");
     Serial.println(rightSpeed);
-
+   
     setMotorSpeeds(leftSpeed, rightSpeed);
     rfLostCounter = 0; // Reset counter if RF signal is received
   }
@@ -390,8 +324,13 @@ void manualMode()
   {
     if (rfLostCounter++ * LOOP_DELAY_MS > 330)
     {
-      setMotorSpeeds(leftSpeed / 2, rightSpeed / 2); // Stop motors semi-gradually if no RF signal for (n)ms
-      rfLostCounter = 0;                             // Reset counter to avoid overflow
+      leftSpeed = (leftSpeed > (MAX_SPEED / 3)) ? (leftSpeed / 3) : 0;
+      rightSpeed = (rightSpeed > (MAX_SPEED / 3)) ? (rightSpeed / 3) : 0;
+
+      leftRampUpSpeed = 0, rightRampUpSpeed = 0;
+
+      setMotorSpeeds(leftSpeed, rightSpeed); // Stop motors semi-gradually if no RF signal for (n)ms => cuts off below (30% of max speed)
+      rfLostCounter = 0;                     // Reset counter to avoid overflow
     }
   }
 
