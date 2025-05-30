@@ -475,44 +475,51 @@ bool readRFSignals()
 //   return distance;
 // }
 
-// void setMotorSpeeds(int leftSpeed, int rightSpeed)
-// {
-//   // Constrain speeds to valid range
-//   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
-//   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
+/// @brief  
+/// Sets the speeds of the left and right motors based on the provided speed values.
+/// Speeds are constrained to the range of -MAX_SPEED to MAX_SPEED.
+/// @param leftSpeed 
+/// The speed for the left motor. Positive values move the motor forward, negative values move it backward.
+/// @param rightSpeed 
+/// The speed for the right motor. Positive values move the motor forward, negative values move it backward.
+void setMotorSpeeds(int leftSpeed, int rightSpeed)
+{
+  // Constrain speeds to valid range
+  leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
+  rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
-//   // Set left motor direction and speed
-//   if (leftSpeed >= 0)
-//   {
-//     // Forward
-//     digitalWrite(LEFT_MOTOR_IN1, HIGH);
-//     digitalWrite(LEFT_MOTOR_IN2, LOW);
-//     analogWrite(LEFT_MOTOR_EN, leftSpeed);
-//   }
-//   else
-//   {
-//     // Backward
-//     digitalWrite(LEFT_MOTOR_IN1, LOW);
-//     digitalWrite(LEFT_MOTOR_IN2, HIGH);
-//     analogWrite(LEFT_MOTOR_EN, -leftSpeed);
-//   }
+  // Set left motor direction and speed
+  if (leftSpeed >= 0)
+  {
+    // Forward
+    digitalWrite(LEFT_MOTOR_IN1, HIGH);
+    digitalWrite(LEFT_MOTOR_IN2, LOW);
+    analogWrite(LEFT_MOTOR_EN, leftSpeed);
+  }
+  else
+  {
+    // Backward
+    digitalWrite(LEFT_MOTOR_IN1, LOW);
+    digitalWrite(LEFT_MOTOR_IN2, HIGH);
+    analogWrite(LEFT_MOTOR_EN, -leftSpeed);
+  }
 
-//   // Set right motor direction and speed
-//   if (rightSpeed >= 0)
-//   {
-//     // Forward
-//     digitalWrite(RIGHT_MOTOR_IN3, HIGH);
-//     digitalWrite(RIGHT_MOTOR_IN4, LOW);
-//     analogWrite(RIGHT_MOTOR_EN, rightSpeed);
-//   }
-//   else
-//   {
-//     // Backward
-//     digitalWrite(RIGHT_MOTOR_IN3, LOW);
-//     digitalWrite(RIGHT_MOTOR_IN4, HIGH);
-//     analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
-//   }
-// }
+  // Set right motor direction and speed
+  if (rightSpeed >= 0)
+  {
+    // Forward
+    digitalWrite(RIGHT_MOTOR_IN3, HIGH);
+    digitalWrite(RIGHT_MOTOR_IN4, LOW);
+    analogWrite(RIGHT_MOTOR_EN, rightSpeed);
+  }
+  else
+  {
+    // Backward
+    digitalWrite(RIGHT_MOTOR_IN3, LOW);
+    digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+    analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
+  }
+}
 
 /// @brief 
 /// Stops both motors by setting their control pins to LOW and disabling PWM.
