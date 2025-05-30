@@ -25,7 +25,8 @@
 #define TURN_TIME 800     // Time to turn in milliseconds
 #define SCAN_INTERVAL 300 // Time between distance measurements
 
-const int LOOP_DELAY_MS = 50;
+const int LOOP_DELAY_MS = 25;
+const int RAMP_STEP     = 125;   // how many speed units we change per loop
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
@@ -59,18 +60,18 @@ float ax, ay, az;
 float gx, gy, gz;
 
 // Function prototypes (good practice)
-void checkModeButton();
+// void checkModeButton();
 void manualMode();
-void autonomousMode();
-void readIMU();
+// void autonomousMode();
+// void readIMU();
 long getDistance();
-void setMotorSpeeds(int leftSpeed, int rightSpeed);
-void stopMotors();
-void turnLeft(int angle);
-void turnRight(int angle);
+// void setMotorSpeeds(int leftSpeed, int rightSpeed);
+// void stopMotors();
+// void turnLeft(int angle);
+// void turnRight(int angle);
 void beep(int duration);
-void beepPattern(int beeps, int beepDuration);
-bool readRFSignals(); // Added prototype
+// void beepPattern(int beeps, int beepDuration);
+bool readRFSignals(); 
 
 void setup()
 {
@@ -205,136 +206,125 @@ void loop()
   // }
 }
 
-void checkModeButton()
-{
-  int reading = digitalRead(MODE_BUTTON_PIN);
+// void checkModeButton()
+// {
+//   int reading = digitalRead(MODE_BUTTON_PIN);
 
-  // Debouncing
-  if (reading != lastButtonState)
-  {
-    lastButtonState = reading;
+//   // Debouncing
+//   if (reading != lastButtonState)
+//   {
+//     lastButtonState = reading;
 
-    // If the button is pressed (LOW due to pull-up)
-    if (reading == LOW)
-    {
-      // Debounce timing - prevent multiple toggles
-      if (millis() - lastModeChange > 300)
-      { // Increased debounce to 300ms
-        autoMode = !autoMode;
-        lastModeChange = millis();
+//     // If the button is pressed (LOW due to pull-up)
+//     if (reading == LOW)
+//     {
+//       // Debounce timing - prevent multiple toggles
+//       if (millis() - lastModeChange > 300)
+//       { // Increased debounce to 300ms
+//         autoMode = !autoMode;
+//         lastModeChange = millis();
 
-        // Indicate mode change with beep
-        if (autoMode)
-        {
-          Serial.println("Switching to AUTO mode");
-          beep(300); // Long beep for auto mode
-        }
-        else
-        {
-          Serial.println("Switching to MANUAL mode");
-          beepPattern(2, 100); // Two short beeps for manual mode
-        }
-        // Stop motors immediately on mode change for safety
-        stopMotors();
-      }
-    }
-  }
-}
-
-int leftRampUpSpeed = 0;
-int rightRampUpSpeed = 0;
+//         // Indicate mode change with beep
+//         if (autoMode)
+//         {
+//           Serial.println("Switching to AUTO mode");
+//           beep(300); // Long beep for auto mode
+//         }
+//         else
+//         {
+//           Serial.println("Switching to MANUAL mode");
+//           beepPattern(2, 100); // Two short beeps for manual mode
+//         }
+//         // Stop motors immediately on mode change for safety
+//         stopMotors();
+//       }
+//     }
+//   }
+// }
 
 void manualMode()
 {
-  // Read and interpret RF signals from the receiver
+  // 1) Read RF & joystick, invert X and Y (90 deg) then swap direction (180 deg)
+  //    this is to account for joystick position + direction on physical controller.
   bool isRead = readRFSignals();
-  // Invert joystick axes to correct orientation
-  int correctedX = 1023 - joystickY; // X increases rightwards
-  int correctedY = 1023 - joystickX; // Y increases upwards
+  int correctedX = 1023 - joystickY;
+  int correctedY = 1023 - joystickX;
 
-  static int leftSpeed = 0;
-  static int rightSpeed = 0;
-  static int rfLostCounter = 0; // Counter for lost RF signals
+  static int leftSpeed       = 0;
+  static int rightSpeed      = 0;
+  static int targetLeft      = 0;
+  static int targetRight     = 0;
+  static int rfLostCounter   = 0;
 
   if (isRead)
   {
+    // 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
+    //    constaint to minMotorSpeed, maxMotorSpeed and apply ramping
+    const int minMotorSpeed    = 60;
+    const int forwardThreshold = 575; // center = 512, forward = 1023
+    const int backwardThreshold= 449; // center = 512, backward = 0
+    const int joystickDeadzone = 75;
 
-    const int minMotorSpeed = 75; // Minimum speed to consider for movement
-    const int joystickDeadzone = 100;
-
-    // 1. First calculate base forward/backward speeds
-    const int forwardThreshold = 550;  // Threshold for detecting forward movement based on joystick Y-axis value.
-    const int backwardThreshold = 470; // Treshhold ... backward movement
-    
-    float ratioLR = (correctedX - 512) / 511.0; // Ratio of left/right speed based on X-axis position
-    float ratioFwdBwd = abs(correctedY - 512) / 511.0; 
-    bool isLowSpeed = abs(ratioFwdBwd) < 0.25;   // Low speed threshold
-
-    Serial.println(
-      String("Joystick: ") + joystickX +
-      " | " + joystickY +
-      " | Corr X: " + correctedX +
-      " | Corr Y: " + correctedY +
-      " | Ratio LR: " + ratioLR +
-      " | Ratio Fwd/Bwd: " + ratioFwdBwd
-    );
-
+    // forward/backward scenario, constraints and ramping
     if (correctedY > forwardThreshold)
-    { // Forward
-      int speed = map(constrain(correctedY, 550, 1023), 550, 1023, 0, MAX_SPEED);
-      speed = constrain(speed, minMotorSpeed, MAX_SPEED); // Ensure speed is above minimum
-
-      leftSpeed = speed;
-      rightSpeed = speed;
+    {
+      int sp = map(constrain(correctedY, forwardThreshold, 1023), forwardThreshold, 1023, 0, MAX_SPEED);
+      sp = constrain(sp, minMotorSpeed, MAX_SPEED);
+      targetLeft  = sp;
+      targetRight = sp;
     }
     else if (correctedY < backwardThreshold)
-    { // Backward
-      int speed = map(constrain(correctedY, 0, 470), 470, 0, 0, MAX_SPEED);
-      speed = constrain(speed, minMotorSpeed, MAX_SPEED); // Ensure speed is above minimum
-
-      leftSpeed = -speed;
-      rightSpeed = -speed;
+    {
+      int sp = map(constrain(correctedY, 0, backwardThreshold), backwardThreshold, 0, 0, MAX_SPEED);
+      sp = constrain(sp, minMotorSpeed, MAX_SPEED);
+      targetLeft  = -sp;
+      targetRight = -sp;
     }
-    else if (isLowSpeed && abs(ratioLR) >= 0.5 && abs(correctedY - 512) < joystickDeadzone){
-      int speed = map(constrain(correctedY, 550, 1023), 550, 1023, 0, MAX_SPEED);
-      speed = constrain(speed, minMotorSpeed, MAX_SPEED); // Ensure speed is above minimum
-
-      leftSpeed = speed * (1.0 - ratioLR); // Reduce left speed based on X-axis position
-      rightSpeed = speed * (1.0 + ratioLR); // Increase right speed based on X-axis position  
+    // in-place turn (L/R sharp turn) scenario
+    // TODO: slower ramp up here for better control?
+    else if (abs((correctedY - 512) / 511.0) < 0.25 &&
+             abs((correctedX - 512) / 511.0) >= 0.5 &&
+             abs(correctedY - 512) < joystickDeadzone)
+    {
+      float ratioLR = (correctedX - 512) / 511.0;
+      int sp = map(constrain(correctedY, forwardThreshold, 1023), forwardThreshold, 1023, 0, MAX_SPEED);
+      sp = constrain(sp, minMotorSpeed, MAX_SPEED);
+      targetLeft  = sp * (1.0 + ratioLR);
+      targetRight = sp * (1.0 - ratioLR);
     }
     else
-    { // Stop if within deadzone (smoothly) => cuts off below (30% of max speed)
-      leftSpeed = (leftSpeed > (MAX_SPEED / 3)) ? (leftSpeed / 3) : 0;
-      rightSpeed = (rightSpeed > (MAX_SPEED / 3)) ? (rightSpeed / 3) : 0;
-
-      leftRampUpSpeed = 0, rightRampUpSpeed = 0;
+    {
+      // deadzone → targets zero
+      targetLeft  = 0;
+      targetRight = 0;
     }
-  
-    Serial.print(" ");
-    Serial.print("L Spd: ");
-    Serial.print(leftSpeed);
-    Serial.print(" | ");
-    Serial.print("R Spd: ");
-    Serial.println(rightSpeed);
-   
+
+    // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft
+    auto slew = [&](int current, int target){
+      if (current < target)  return min(current + RAMP_STEP, target);
+      if (current > target)  return max(current - RAMP_STEP, target);
+      return current;
+    };
+    leftSpeed  = slew(leftSpeed,  targetLeft);
+    rightSpeed = slew(rightSpeed, targetRight);
+
     setMotorSpeeds(leftSpeed, rightSpeed);
-    rfLostCounter = 0; // Reset counter if RF signal is received
+    rfLostCounter = 0;
   }
   else
   {
-    if (rfLostCounter++ * LOOP_DELAY_MS > 330)
+    // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
+    // NOTE: fluctuating signal causes judder, 
+    if (rfLostCounter++ * LOOP_DELAY_MS > 440)
     {
-      leftSpeed = (leftSpeed > (MAX_SPEED / 3)) ? (leftSpeed / 3) : 0;
-      rightSpeed = (rightSpeed > (MAX_SPEED / 3)) ? (rightSpeed / 3) : 0;
-
-      leftRampUpSpeed = 0, rightRampUpSpeed = 0;
-
-      setMotorSpeeds(leftSpeed, rightSpeed); // Stop motors semi-gradually if no RF signal for (n)ms => cuts off below (30% of max speed)
-      rfLostCounter = 0;                     // Reset counter to avoid overflow
+      leftSpeed  = (leftSpeed  > MAX_SPEED/3) ? leftSpeed/3  : 0;
+      rightSpeed = (rightSpeed > MAX_SPEED/3) ? rightSpeed/3 : 0;
+      setMotorSpeeds(leftSpeed, rightSpeed);
+      rfLostCounter = 0;
     }
   }
 
-  // Check if joystick button is pressed to activate buzzer
+  // buzzer beep boop
   if (joystickButton && !buzzerEnabled)
   {
     digitalWrite(BUZZER_PIN, HIGH);
@@ -347,7 +337,10 @@ void manualMode()
   }
 }
 
-// *** MODIFIED readRFSignals FUNCTION ***
+/// @brief 
+/// Reads RF signals from the joystick transmitter and updates global joystick variables.
+/// @return 
+/// Returns true if data was successfully received and updated, false otherwise.
 bool readRFSignals()
 {
   JoystickData receivedData;          // Create a struct to hold the received data
@@ -373,203 +366,206 @@ bool readRFSignals()
 
   return false;
 }
-// *** END OF MODIFIED readRFSignals FUNCTION ***
 
-void autonomousMode()
-{
-  // Get distance from ultrasonic sensor
-  long distance = getDistance();
 
-  // Use IMU to help with navigation
-  readIMU();
+// /// @brief 
+// /// WIP
+// void autonomousMode()
+// {
+//   // Get distance from ultrasonic sensor
+//   long distance = getDistance();
 
-  // Simple obstacle avoidance logic
-  if (distance < MIN_DISTANCE)
-  {
-    // Obstacle detected - stop and determine turn direction
-    stopMotors();
-    delay(200);
+//   // Use IMU to help with navigation
+//   readIMU();
 
-    // Use IMU data to decide which way to turn
-    // For example, turn to the side with less tilt or acceleration
-    if (ax > 0)
-    { // Sample logic - can be refined
-      turnRight(180);
-    }
-    else
-    {
-      turnLeft(180);
-    }
-  }
-  else
-  {
-    // No obstacle, move forward with slight adjustments based on IMU
-    // This can help keep the car moving straight
-    int baseSpeed = 180; // 70% of max speed for better control
-    int leftSpeed = baseSpeed;
-    int rightSpeed = baseSpeed;
+//   // Simple obstacle avoidance logic
+//   if (distance < MIN_DISTANCE)
+//   {
+//     // Obstacle detected - stop and determine turn direction
+//     stopMotors();
+//     delay(200);
 
-    // Slight steering correction based on gyro data
-    if (gz > 100)
-    { // Drifting right, correct left
-      leftSpeed += 20;
-      rightSpeed -= 20;
-    }
-    else if (gz < -100)
-    { // Drifting left, correct right
-      leftSpeed -= 20;
-      rightSpeed += 20;
-    }
+//     // Use IMU data to decide which way to turn
+//     // For example, turn to the side with less tilt or acceleration
+//     if (ax > 0)
+//     { // Sample logic - can be refined
+//       turnRight(180);
+//     }
+//     else
+//     {
+//       turnLeft(180);
+//     }
+//   }
+//   else
+//   {
+//     // No obstacle, move forward with slight adjustments based on IMU
+//     // This can help keep the car moving straight
+//     int baseSpeed = 180; // 70% of max speed for better control
+//     int leftSpeed = baseSpeed;
+//     int rightSpeed = baseSpeed;
 
-    // Set motor speeds
-    setMotorSpeeds(leftSpeed, rightSpeed);
-  }
-}
+//     // Slight steering correction based on gyro data
+//     if (gz > 100)
+//     { // Drifting right, correct left
+//       leftSpeed += 20;
+//       rightSpeed -= 20;
+//     }
+//     else if (gz < -100)
+//     { // Drifting left, correct right
+//       leftSpeed -= 20;
+//       rightSpeed += 20;
+//     }
 
-void readIMU()
-{
-  // Read the sensor values (similar to your working approach)
+//     // Set motor speeds
+//     setMotorSpeeds(leftSpeed, rightSpeed);
+//   }
+// }
 
-  // Get accelerometer values (in g's, convert to m/s²)
-  int16_t ax_raw, ay_raw, az_raw;
-  mpu.getAcceleration(&ax_raw, &ay_raw, &az_raw);
+// /// WIP lib issues
+// void readIMU()
+// {
+//   // Read the sensor values (similar to your working approach)
 
-  // Convert to m/s² (assuming ±4g range: 32768 = 4g = 39.24 m/s²)
-  ax = (float)ax_raw / 32768.0 * 4.0 * 9.81;
-  ay = (float)ay_raw / 32768.0 * 4.0 * 9.81;
-  az = (float)az_raw / 32768.0 * 4.0 * 9.81;
+//   // Get accelerometer values (in g's, convert to m/s²)
+//   int16_t ax_raw, ay_raw, az_raw;
+//   mpu.getAcceleration(&ax_raw, &ay_raw, &az_raw);
 
-  // Get gyroscope values (in degrees/s, convert to rad/s)
-  int16_t gx_raw, gy_raw, gz_raw;
-  mpu.getRotation(&gx_raw, &gy_raw, &gz_raw);
+//   // Convert to m/s² (assuming ±4g range: 32768 = 4g = 39.24 m/s²)
+//   ax = (float)ax_raw / 32768.0 * 4.0 * 9.81;
+//   ay = (float)ay_raw / 32768.0 * 4.0 * 9.81;
+//   az = (float)az_raw / 32768.0 * 4.0 * 9.81;
 
-  // Convert to rad/s (assuming ±500°/s range: 32768 = 500°/s)
-  gx = (float)gx_raw / 32768.0 * 500.0 * PI / 180.0;
-  gy = (float)gy_raw / 32768.0 * 500.0 * PI / 180.0;
-  gz = (float)gz_raw / 32768.0 * 500.0 * PI / 180.0;
+//   // Get gyroscope values (in degrees/s, convert to rad/s)
+//   int16_t gx_raw, gy_raw, gz_raw;
+//   mpu.getRotation(&gx_raw, &gy_raw, &gz_raw);
 
-  // Print IMU values for debugging (can be removed in final code)
-  // You might want to print these less frequently or on demand
-  // Serial.print("IMU: ");
-  // Serial.print(ax); Serial.print("\t");
-  // Serial.print(ay); Serial.print("\t");
-  // Serial.print(az); Serial.print("\t");
-  // Serial.print(gx); Serial.print("\t");
-  // Serial.print(gy); Serial.print("\t");
-  // Serial.println(gz);
-}
+//   // Convert to rad/s (assuming ±500°/s range: 32768 = 500°/s)
+//   gx = (float)gx_raw / 32768.0 * 500.0 * PI / 180.0;
+//   gy = (float)gy_raw / 32768.0 * 500.0 * PI / 180.0;
+//   gz = (float)gz_raw / 32768.0 * 500.0 * PI / 180.0;
 
-long getDistance()
-{
-  // Trigger ultrasonic pulse
-  digitalWrite(ULTRASONIC_TRIG, LOW);
-  delayMicroseconds(2);
-  digitalWrite(ULTRASONIC_TRIG, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(ULTRASONIC_TRIG, LOW);
+//   // Print IMU values for debugging (can be removed in final code)
+//   // You might want to print these less frequently or on demand
+//   // Serial.print("IMU: ");
+//   // Serial.print(ax); Serial.print("\t");
+//   // Serial.print(ay); Serial.print("\t");
+//   // Serial.print(az); Serial.print("\t");
+//   // Serial.print(gx); Serial.print("\t");
+//   // Serial.print(gy); Serial.print("\t");
+//   // Serial.println(gz);
+// }
 
-  // Read the echo time
-  long duration = pulseIn(ULTRASONIC_ECHO, HIGH);
+// long getDistance()
+// {
+//   // Trigger ultrasonic pulse
+//   digitalWrite(ULTRASONIC_TRIG, LOW);
+//   delayMicroseconds(2);
+//   digitalWrite(ULTRASONIC_TRIG, HIGH);
+//   delayMicroseconds(10);
+//   digitalWrite(ULTRASONIC_TRIG, LOW);
 
-  // Calculate distance in cm
-  // Speed of sound is 343m/s or 0.0343cm/µs
-  // Time is round-trip, so divide by 2
-  long distance = (duration * 0.0343) / 2;
+//   // Read the echo time
+//   long duration = pulseIn(ULTRASONIC_ECHO, HIGH);
 
-  return distance;
-}
+//   // Calculate distance in cm
+//   // Speed of sound is 343m/s or 0.0343cm/µs
+//   // Time is round-trip, so divide by 2
+//   long distance = (duration * 0.0343) / 2;
 
-void setMotorSpeeds(int leftSpeed, int rightSpeed)
-{
-  // Constrain speeds to valid range
-  leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
-  rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
+//   return distance;
+// }
 
-  // Set left motor direction and speed
-  if (leftSpeed >= 0)
-  {
-    // Forward
-    digitalWrite(LEFT_MOTOR_IN1, HIGH);
-    digitalWrite(LEFT_MOTOR_IN2, LOW);
-    analogWrite(LEFT_MOTOR_EN, leftSpeed);
-  }
-  else
-  {
-    // Backward
-    digitalWrite(LEFT_MOTOR_IN1, LOW);
-    digitalWrite(LEFT_MOTOR_IN2, HIGH);
-    analogWrite(LEFT_MOTOR_EN, -leftSpeed);
-  }
+// void setMotorSpeeds(int leftSpeed, int rightSpeed)
+// {
+//   // Constrain speeds to valid range
+//   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
+//   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
-  // Set right motor direction and speed
-  if (rightSpeed >= 0)
-  {
-    // Forward
-    digitalWrite(RIGHT_MOTOR_IN3, HIGH);
-    digitalWrite(RIGHT_MOTOR_IN4, LOW);
-    analogWrite(RIGHT_MOTOR_EN, rightSpeed);
-  }
-  else
-  {
-    // Backward
-    digitalWrite(RIGHT_MOTOR_IN3, LOW);
-    digitalWrite(RIGHT_MOTOR_IN4, HIGH);
-    analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
-  }
-}
+//   // Set left motor direction and speed
+//   if (leftSpeed >= 0)
+//   {
+//     // Forward
+//     digitalWrite(LEFT_MOTOR_IN1, HIGH);
+//     digitalWrite(LEFT_MOTOR_IN2, LOW);
+//     analogWrite(LEFT_MOTOR_EN, leftSpeed);
+//   }
+//   else
+//   {
+//     // Backward
+//     digitalWrite(LEFT_MOTOR_IN1, LOW);
+//     digitalWrite(LEFT_MOTOR_IN2, HIGH);
+//     analogWrite(LEFT_MOTOR_EN, -leftSpeed);
+//   }
 
-void stopMotors()
-{
-  digitalWrite(LEFT_MOTOR_IN1, LOW);
-  digitalWrite(LEFT_MOTOR_IN2, LOW);
-  analogWrite(LEFT_MOTOR_EN, 0);
+//   // Set right motor direction and speed
+//   if (rightSpeed >= 0)
+//   {
+//     // Forward
+//     digitalWrite(RIGHT_MOTOR_IN3, HIGH);
+//     digitalWrite(RIGHT_MOTOR_IN4, LOW);
+//     analogWrite(RIGHT_MOTOR_EN, rightSpeed);
+//   }
+//   else
+//   {
+//     // Backward
+//     digitalWrite(RIGHT_MOTOR_IN3, LOW);
+//     digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+//     analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
+//   }
+// }
 
-  digitalWrite(RIGHT_MOTOR_IN3, LOW);
-  digitalWrite(RIGHT_MOTOR_IN4, LOW);
-  analogWrite(RIGHT_MOTOR_EN, 0);
-}
+// void stopMotors()
+// {
+//   digitalWrite(LEFT_MOTOR_IN1, LOW);
+//   digitalWrite(LEFT_MOTOR_IN2, LOW);
+//   analogWrite(LEFT_MOTOR_EN, 0);
 
-void turnLeft(int angle)
-{
-  // Simple timed turn - can be refined with IMU for more precise angles
-  stopMotors();
-  delay(100);
+//   digitalWrite(RIGHT_MOTOR_IN3, LOW);
+//   digitalWrite(RIGHT_MOTOR_IN4, LOW);
+//   analogWrite(RIGHT_MOTOR_EN, 0);
+// }
 
-  // Tank turn left - right wheel forward, left wheel backward
-  digitalWrite(LEFT_MOTOR_IN1, LOW);
-  digitalWrite(LEFT_MOTOR_IN2, HIGH);
-  analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
+// void turnLeft(int angle)
+// {
+//   // Simple timed turn - can be refined with IMU for more precise angles
+//   stopMotors();
+//   delay(100);
 
-  digitalWrite(RIGHT_MOTOR_IN3, HIGH);
-  digitalWrite(RIGHT_MOTOR_IN4, LOW);
-  analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
+//   // Tank turn left - right wheel forward, left wheel backward
+//   digitalWrite(LEFT_MOTOR_IN1, LOW);
+//   digitalWrite(LEFT_MOTOR_IN2, HIGH);
+//   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
 
-  // Time-based turn - approximately 90 degrees
-  delay(TURN_TIME * angle / 90);
+//   digitalWrite(RIGHT_MOTOR_IN3, HIGH);
+//   digitalWrite(RIGHT_MOTOR_IN4, LOW);
+//   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
 
-  stopMotors();
-}
+//   // Time-based turn - approximately 90 degrees
+//   delay(TURN_TIME * angle / 90);
 
-void turnRight(int angle)
-{
-  // Simple timed turn - can be refined with IMU for more precise angles
-  stopMotors();
-  delay(100);
+//   stopMotors();
+// }
 
-  // Tank turn right - left wheel forward, right wheel backward
-  digitalWrite(LEFT_MOTOR_IN1, HIGH);
-  digitalWrite(LEFT_MOTOR_IN2, LOW);
-  analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
+// void turnRight(int angle)
+// {
+//   // Simple timed turn - can be refined with IMU for more precise angles
+//   stopMotors();
+//   delay(100);
 
-  digitalWrite(RIGHT_MOTOR_IN3, LOW);
-  digitalWrite(RIGHT_MOTOR_IN4, HIGH);
-  analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
+//   // Tank turn right - left wheel forward, right wheel backward
+//   digitalWrite(LEFT_MOTOR_IN1, HIGH);
+//   digitalWrite(LEFT_MOTOR_IN2, LOW);
+//   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
 
-  // Time-based turn - approximately 90 degrees
-  delay(TURN_TIME * angle / 90);
+//   digitalWrite(RIGHT_MOTOR_IN3, LOW);
+//   digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+//   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
 
-  stopMotors();
-}
+//   // Time-based turn - approximately 90 degrees
+//   delay(TURN_TIME * angle / 90);
+
+//   stopMotors();
+// }
 
 void beep(int duration)
 {
@@ -578,13 +574,13 @@ void beep(int duration)
   digitalWrite(BUZZER_PIN, LOW);
 }
 
-void beepPattern(int beeps, int beepDuration)
-{
-  for (int b = 0; b < beeps; b++)
-  { // Changed loop variable from 'i' to 'b' to avoid conflict with global 'i'
-    digitalWrite(BUZZER_PIN, HIGH);
-    delay(beepDuration);
-    digitalWrite(BUZZER_PIN, LOW);
-    delay(beepDuration);
-  }
-}
+// void beepPattern(int beeps, int beepDuration)
+// {
+//   for (int b = 0; b < beeps; b++)
+//   { // Changed loop variable from 'i' to 'b' to avoid conflict with global 'i'
+//     digitalWrite(BUZZER_PIN, HIGH);
+//     delay(beepDuration);
+//     digitalWrite(BUZZER_PIN, LOW);
+//     delay(beepDuration);
+//   }
+// }
