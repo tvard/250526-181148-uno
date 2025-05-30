@@ -514,16 +514,18 @@ bool readRFSignals()
 //   }
 // }
 
-// void stopMotors()
-// {
-//   digitalWrite(LEFT_MOTOR_IN1, LOW);
-//   digitalWrite(LEFT_MOTOR_IN2, LOW);
-//   analogWrite(LEFT_MOTOR_EN, 0);
+/// @brief 
+/// Stops both motors by setting their control pins to LOW and disabling PWM.
+void stopMotors()
+{
+  digitalWrite(LEFT_MOTOR_IN1, LOW);
+  digitalWrite(LEFT_MOTOR_IN2, LOW);
+  analogWrite(LEFT_MOTOR_EN, 0);
 
-//   digitalWrite(RIGHT_MOTOR_IN3, LOW);
-//   digitalWrite(RIGHT_MOTOR_IN4, LOW);
-//   analogWrite(RIGHT_MOTOR_EN, 0);
-// }
+  digitalWrite(RIGHT_MOTOR_IN3, LOW);
+  digitalWrite(RIGHT_MOTOR_IN4, LOW);
+  analogWrite(RIGHT_MOTOR_EN, 0);
+}
 
 // void turnLeft(int angle)
 // {
