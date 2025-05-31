@@ -65,6 +65,8 @@ You can switch between manual and autonomous modes by pressing the **mode toggle
 
 ## Future Improvements
 
+- Use MPU to keep car straight in manualMode in 
+- Isolate MPU analogue signals (interference)
 - Implement autonomous navigation using algorithms (e.g., PID control, SLAM).
 - Add more sensors for better obstacle detection (though, sonic sensor may be enough, TBC).
 - Refine the IMU-based steering correction for smoother control.

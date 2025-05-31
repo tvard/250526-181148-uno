@@ -1,3 +1,5 @@
+// pro16MHzatmega328 pinout: https://protosupplies.com/wp-content/uploads/2020/10/Pro-Mini-Board-Pinout.jpg
+
 #include <RH_ASK.h> // Include the RadioHead library
 #include <SPI.h>    // Include the SPI library (required for RadioHead)
 
@@ -8,7 +10,7 @@ const int JOY_BUTTON_PIN = 16;  // Joystick button
 // const int RF_DATA_PIN = 11;    // RFM69 CS (Chip Select) pin 
 
 // Create an instance of the rf_driver radio object, at a certain bps rate (slower = longer range, faster = less range)
-RH_ASK rf_driver(2000); // Using pin 12 as RX (unused in transmitter) and RF_DATA_PIN as TX
+RH_ASK rf_driver(1500); // Using pin 12 as RX (unused in transmitter) and RF_DATA_PIN as TX
 
 // Define the structure for the data we want to send
 struct JoystickData {
@@ -22,6 +24,10 @@ const int digitalEnd = 13;
 
 const int analogStart = A0;
 const int analogEnd = A5;
+
+int calibratedXCenterDrift = 0; // Center drift for X-axis
+int calibratedYCenterDrift = 0; // Center drift for Y-axis
+
 
 void setup() {
  pinMode(JOY_BUTTON_PIN, INPUT_PULLUP); // Set joystick button pin as input with pullup
@@ -37,14 +43,38 @@ void setup() {
   }
 
   Serial.println("rf_driver initialization successful!");
+
+  // Calibrate joystick center for 3 seconds
+  long xSum = 0, ySum = 0;
+  const int delayMs = 25; // Delay between samples
+  const int samples = 3000 / delayMs; // e.g 3s at 25ms/sample => 120 samples
+  Serial.println("Calibrating joystick center...");
+  for (int i = 0; i < samples; ++i) {
+    xSum += analogRead(JOY_X_PIN);
+    ySum += analogRead(JOY_Y_PIN);
+    delay(delayMs);
+  }
+
+  calibratedXCenterDrift = 512 - xSum / samples;
+  calibratedYCenterDrift  = 512 - ySum / samples;
+  Serial.print("Calibration complete. X: ");
+  Serial.print((calibratedXCenterDrift >= 0 ? "+" : ""));
+  Serial.print(calibratedXCenterDrift);
+  Serial.print(", Y: ");
+  Serial.print((calibratedYCenterDrift >= 0 ? "+" : ""));
+  Serial.println(calibratedYCenterDrift);
 }
 
 
 void loop() {
   // 1. Read Joystick and Button
-  int xValue = analogRead(JOY_X_PIN);     // Read X-axis value (0-1023)
-  int yValue = analogRead(JOY_Y_PIN);     // Read Y-axis value (0-1023)
+  int rawX = analogRead(JOY_X_PIN);     // Read X-axis value (0-1023)
+  int rawY = analogRead(JOY_Y_PIN);     // Read Y-axis value (0-1023)
   bool buttonPressed = digitalRead(JOY_BUTTON_PIN) == LOW; // LOW if pressed (due to pullup)
+
+  // Adjust values by subtracting the calibrated center
+  int xValue = rawX + calibratedXCenterDrift;
+  int yValue = rawY + calibratedYCenterDrift;
 
   // 2. Prepare Data to Send
   JoystickData data; // Create an instance of our data structure

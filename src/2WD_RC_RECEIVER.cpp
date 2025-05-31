@@ -26,12 +26,12 @@
 #define SCAN_INTERVAL 300 // Time between distance measurements
 
 const int LOOP_DELAY_MS = 25;
-const int RAMP_STEP     = 125;   // how many speed units we change per loop
+const int RAMP_STEP     = 40;   // how many speed units we change per loop, less = smoother but slower response
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
 // slower = better range, but less responsive
-RH_ASK rf_driver(2000);
+RH_ASK rf_driver(1500);
 
 // Structure for joystick data - MUST MATCH THE TRANSMITTER EXACTLY
 struct JoystickData
@@ -59,14 +59,17 @@ MPU6050 mpu;
 float ax, ay, az;
 float gx, gy, gz;
 
+// Dynamically track joystick X center to account for drift
+static int joystickXCenter = 512;
+
 // Function prototypes (good practice)
 // void checkModeButton();
 void manualMode();
 // void autonomousMode();
 // void readIMU();
-long getDistance();
-// void setMotorSpeeds(int leftSpeed, int rightSpeed);
-// void stopMotors();
+// long getDistance();
+void setMotorSpeeds(int leftSpeed, int rightSpeed);
+void stopMotors();
 // void turnLeft(int angle);
 // void turnRight(int angle);
 void beep(int duration);
@@ -198,6 +201,7 @@ void loop()
   // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
   delay(LOOP_DELAY_MS);
+  
   // // Control based on current mode
   // if (autoMode) {
   //   autonomousMode();
@@ -247,6 +251,8 @@ void manualMode()
   // 1) Read RF & joystick, invert X and Y (90 deg) then swap direction (180 deg)
   //    this is to account for joystick position + direction on physical controller.
   bool isRead = readRFSignals();
+  bool skipSlewRate = false; // Flag to skip slew-rate control (e.g for sharp turns)
+
   int correctedX = 1023 - joystickY;
   int correctedY = 1023 - joystickX;
 
@@ -256,22 +262,97 @@ void manualMode()
   static int targetRight     = 0;
   static int rfLostCounter   = 0;
 
+  /**
+   * Joystick center variance
+   * X	    Y 	
+   * 547	  523	  MIN
+   * 565	  540	  MAX
+   * 18	    17	  Variance
+   */
+
   if (isRead)
   {
     // 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
     //    constaint to minMotorSpeed, maxMotorSpeed and apply ramping
     const int minMotorSpeed    = 60;
-    const int forwardThreshold = 575; // center = 512, forward = 1023
-    const int backwardThreshold= 449; // center = 512, backward = 0
-    const int joystickDeadzone = 75;
+    const int joystickDeadzone = 18 ; // deadzone around center based on joystick variance
+    const int forwardThreshold = 512 + joystickDeadzone; // center = 512, forward = 1023  (center can change with usage)
+    const int backwardThreshold= 512 - joystickDeadzone; // center = 512, backward = 0
+    
 
+    float rawRatioLR = ((float)correctedX - 512.0) / 512.0; // ratio of left/right stick deflection, centered at 0
+    rawRatioLR = constrain(rawRatioLR, -1.0, 1.0);
+
+    // Quantize to nearest 0.n (n steps between -1 and +1)
+    float quantizeStep = 0.15f;
+    float steppedRatioLR = round(rawRatioLR / quantizeStep) * quantizeStep;
+
+    // DEBUG
+    Serial.print("Joystick X: ");
+    Serial.print(correctedX);
+    Serial.print(" | Joystick Y: ");
+    Serial.print(correctedY);
+    Serial.print(" | Raw Ratio LR: ");
+    Serial.print(rawRatioLR, 2); // Print the raw ratio for debugging
+    Serial.print(" | Stepped Ratio LR: ");
+    Serial.print(steppedRatioLR, 2); // Print the stepped ratio for debugging
+
+    // Serial.print(" | PRE-CHECK: Y="); Serial.print(correctedY);
+    // Serial.print(" Y-512="); Serial.print(correctedY - 512.0);
+    // Serial.print(" Ratio="); Serial.println(steppedRatioLR);
+
+    Serial.print(" | Sharp Turn: ");
+    Serial.print((abs(correctedY - joystickXCenter) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= 0.15  ? "Yes" : "No"));
+    Serial.println();
+
+    // in-place turn (L/R sharp turn) scenario (within n% of center )
+    if (abs(correctedY - 512) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= 0.15)
+    {
+      int sp = minMotorSpeed + (MAX_SPEED - minMotorSpeed) * fabs(steppedRatioLR); // scale speed with stick deflection
+      sp = constrain(sp, minMotorSpeed, (int)(MAX_SPEED * 0.5)); // Ensure speed is within bounds, limit as pivot is hard to control
+
+      // For left turn, left wheel backward, right wheel forward; for right turn, opposite
+      targetLeft  = (steppedRatioLR > 0) ? sp : -sp;
+      targetRight = (steppedRatioLR > 0) ? -sp : sp;
+      skipSlewRate = false; // Mark as skip slew-rate
+
+      if (steppedRatioLR > 0) {
+        Serial.print("  Sharp Turn Right with ratio: ");
+      } else {
+        Serial.print("  Sharp Turn Left with ratio: ");
+      }
+
+      Serial.print(steppedRatioLR, 2);
+      Serial.print(" | Target Speeds: ");
+      Serial.print(targetLeft);
+      Serial.print(" | ");
+      Serial.print(targetRight);
+      Serial.println();
+    }
     // forward/backward scenario, constraints and ramping
-    if (correctedY > forwardThreshold)
+    else if (correctedY > forwardThreshold)
     {
       int sp = map(constrain(correctedY, forwardThreshold, 1023), forwardThreshold, 1023, 0, MAX_SPEED);
       sp = constrain(sp, minMotorSpeed, MAX_SPEED);
       targetLeft  = sp;
       targetRight = sp;
+
+      if (fabs(steppedRatioLR) >= 0.25) {
+        // If joystick is tilted left/right, adjust speeds for turning
+        targetLeft  *= (1.0 + steppedRatioLR);
+        targetRight *= (1.0 - steppedRatioLR);
+        skipSlewRate = false; // Reset skip slew-rate flag
+      }
+      
+      Serial.print("  Forward with ratio: ");
+      Serial.print(steppedRatioLR, 2); // Print the ratio for debugging
+      Serial.print(" | Target Speeds: ");
+      Serial.print(targetLeft);
+      Serial.print(" | ");
+      Serial.print(targetRight);
+      Serial.println();
+
+      // TODO: use IMU to adjust targetLeft and targetRight to account for drift if it keep doing so, test first
     }
     else if (correctedY < backwardThreshold)
     {
@@ -279,18 +360,22 @@ void manualMode()
       sp = constrain(sp, minMotorSpeed, MAX_SPEED);
       targetLeft  = -sp;
       targetRight = -sp;
-    }
-    // in-place turn (L/R sharp turn) scenario
-    // TODO: slower ramp up here for better control?
-    else if (abs((correctedY - 512) / 511.0) < 0.25 &&
-             abs((correctedX - 512) / 511.0) >= 0.5 &&
-             abs(correctedY - 512) < joystickDeadzone)
-    {
-      float ratioLR = (correctedX - 512) / 511.0;
-      int sp = map(constrain(correctedY, forwardThreshold, 1023), forwardThreshold, 1023, 0, MAX_SPEED);
-      sp = constrain(sp, minMotorSpeed, MAX_SPEED);
-      targetLeft  = sp * (1.0 + ratioLR);
-      targetRight = sp * (1.0 - ratioLR);
+
+      if (fabs(steppedRatioLR) >= 0.25) {
+        // If joystick is tilted left/right, adjust speeds for turning
+        targetLeft  *= (1.0 + steppedRatioLR);
+        targetRight *= (1.0 - steppedRatioLR);
+        skipSlewRate = false; // Reset skip slew-rate flag
+      }
+      
+      Serial.print("  Backward with ratio: ");
+      Serial.print(steppedRatioLR, 2); // Print the ratio for debugging
+      Serial.print(" | Target Speeds: ");
+      Serial.print(targetLeft);
+      Serial.print(" | ");
+      Serial.print(targetRight);
+      Serial.println();
+
     }
     else
     {
@@ -299,14 +384,21 @@ void manualMode()
       targetRight = 0;
     }
 
-    // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft
-    auto slew = [&](int current, int target){
-      if (current < target)  return min(current + RAMP_STEP, target);
-      if (current > target)  return max(current - RAMP_STEP, target);
-      return current;
-    };
-    leftSpeed  = slew(leftSpeed,  targetLeft);
-    rightSpeed = slew(rightSpeed, targetRight);
+    if (!skipSlewRate) {
+      // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft
+      auto slew = [&](int current, int target){
+        if (current < target)  return min(current + RAMP_STEP, target);
+        if (current > target)  return max(current - RAMP_STEP, target);
+        return current;
+      };
+      leftSpeed  = slew(leftSpeed,  targetLeft);
+      rightSpeed = slew(rightSpeed, targetRight);
+    }
+    else {
+      // If we skipped slew-rate, just set to target immediately
+      leftSpeed  = targetLeft;
+      rightSpeed = targetRight;
+    }
 
     setMotorSpeeds(leftSpeed, rightSpeed);
     rfLostCounter = 0;
@@ -314,13 +406,20 @@ void manualMode()
   else
   {
     // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
-    // NOTE: fluctuating signal causes judder, 
-    if (rfLostCounter++ * LOOP_DELAY_MS > 440)
+    if (rfLostCounter++ * LOOP_DELAY_MS > 440 || skipSlewRate)
     {
-      leftSpeed  = (leftSpeed  > MAX_SPEED/3) ? leftSpeed/3  : 0;
-      rightSpeed = (rightSpeed > MAX_SPEED/3) ? rightSpeed/3 : 0;
+      if (!skipSlewRate) {
+        leftSpeed  = (leftSpeed  > MAX_SPEED/3) ? leftSpeed/3  : 0;
+        rightSpeed = (rightSpeed > MAX_SPEED/3) ? rightSpeed/3 : 0;
+      }
+      else { // If we skipped slew-rate, just stop immediately
+        leftSpeed  = 0;
+        rightSpeed = 0;
+      }
+      
       setMotorSpeeds(leftSpeed, rightSpeed);
       rfLostCounter = 0;
+      Serial.println("RF signal lost, slowing down...");  
     }
   }
 
@@ -353,13 +452,13 @@ bool readRFSignals()
     joystickY = receivedData.yValue;
     joystickButton = receivedData.buttonPressed;
 
-    // Print the received values (not the raw buffer)
-    Serial.print("Received RF: X=");
-    Serial.print(joystickX);
-    Serial.print(", Y=");
-    Serial.print(joystickY);
-    Serial.print(", Button=");
-    Serial.print(joystickButton ? "Pressed" : "Released");
+    // // Print the received values (not the raw buffer)
+    // Serial.print("Received RF: X=");
+    // Serial.print(joystickX);
+    // Serial.print(", Y=");
+    // Serial.print(joystickY);
+    // Serial.print(", Button=");
+    // Serial.println(joystickButton ? "Pressed" : "Released");
 
     return true;
   }
