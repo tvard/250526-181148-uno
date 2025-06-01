@@ -63,6 +63,19 @@ In autonomous mode, the car attempts to navigate using the ultrasonic sensor to 
 
 You can switch between manual and autonomous modes by pressing the **mode toggle button** (`MODE_BUTTON_PIN`). The system will give a short beep for manual mode and a long beep for autonomous mode.
 
+## Immediate Fixes TODO
+
+FS1000A is extremely noise-sensitive - add decoupling capacitors directly on module pins / as close to the module as possible:
+
+Transmitter: 10μF electrolytic + 0.1μF ceramic between VCC/GND
+
+    VCC   --  [10μF electrolytic] -- GND
+          --  [0.1μF ceramic]   ---- GND
+
+Receiver: 10nF ceramic between DATA and GND
+
+    DATA  --  [10nF ceramic]    ---- GND
+
 ## Future Improvements
 
 - Use MPU to keep car straight in manualMode in 
