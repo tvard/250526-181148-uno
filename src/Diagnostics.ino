@@ -31,3 +31,29 @@
 //   }
 //   delay(10);
 // }
+
+
+/*
+ *  Range Test Protocol
+ *  Upload this diagnostic sketch to receiver:
+ *  
+ *  Good Results: >5 packets/s at 5m = working
+ *  Bad Results: <2 packets/s = check antenna/capacitors
+ *  This sketch will print RSSI and packets/s to Serial Monitor.
+ *
+*/
+// void loop() {
+//   static uint32_t last = 0;
+//   static uint16_t count = 0;
+  
+//   if (driver.recv(buf, &buflen)) {
+//     count++;
+    
+//     if (millis() - last > 1000) {
+//       Serial.print("RSSI: "); Serial.print(driver.lastRssi());
+//       Serial.print(" | Packets/s: "); Serial.println(count);
+//       count = 0;
+//       last = millis();
+//     }
+//   }
+// }

@@ -7,110 +7,92 @@
 const int JOY_X_PIN = A0;       // Joystick X-axis 
 const int JOY_Y_PIN = A1;       // Joystick Y-axis 
 const int JOY_BUTTON_PIN = 16;  // Joystick button 
-// const int RF_DATA_PIN = 11;    // RFM69 CS (Chip Select) pin 
 
-// Create an instance of the rf_driver radio object, at a certain bps rate (slower = longer range, faster = less range)
-RH_ASK rf_driver(1500); // Using pin 12 as RX (unused in transmitter) and RF_DATA_PIN as TX
+// Create an instance of the rf_driver radio object with optimized settings
+RH_ASK rf_driver(1000, 11, 12); // TX=11, RX=12 (RX unused in transmitter)
 
-// Define the structure for the data we want to send
-struct JoystickData {
-  int xValue;
-  int yValue;
-  bool buttonPressed;
+// Packed data structure (4 bytes total)
+struct PackedData {
+  uint16_t x : 10;  // 10 bits for X (0-1023)
+  uint16_t y : 10;  // 10 bits for Y (0-1023)
+  uint8_t btn : 1;   // Button state
+  uint8_t crc : 5;   // Simple checksum (5 bits)
 };
 
-const int digitalStart = 2;
-const int digitalEnd = 13;
+int calibratedXCenterDrift = 0;
+int calibratedYCenterDrift = 0;
 
-const int analogStart = A0;
-const int analogEnd = A5;
-
-int calibratedXCenterDrift = 0; // Center drift for X-axis
-int calibratedYCenterDrift = 0; // Center drift for Y-axis
-
+// Simple CRC calculation (XOR-based)
+uint8_t calcCRC(uint16_t x, uint16_t y, bool btn) {
+  return (x ^ y ^ btn) & 0x1F; // Use 5-bit CRC
+}
 
 void setup() {
- pinMode(JOY_BUTTON_PIN, INPUT_PULLUP); // Set joystick button pin as input with pullup
-
-  Serial.begin(9600);         // Start serial communication for debugging
-
-  while (!Serial); // Wait for serial connection (safe on most serial adapters)
-
-  // Initialize the rf_driver radio module
-  if (!rf_driver.init()) {
-    Serial.println("rf_driver initialization failed!");
-    while (1); // Stop if the radio doesn't initialize
+  pinMode(JOY_BUTTON_PIN, INPUT_PULLUP);
+  Serial.begin(9600);
+  
+  // Initialize with critical optimizations
+  if (rf_driver.init()) {
+    rf_driver.crc();                   // Enable CRC checking
+    rf_driver.setPreambleLength(16);   // Longer preamble for sync
+    rf_driver.setModeIdle();           // Prevent spurious transmissions
+    Serial.println("Radio initialized!");
+  } else {
+    Serial.println("Radio init failed!");
+    while(1);
   }
 
-  Serial.println("rf_driver initialization successful!");
-
-  // Calibrate joystick center for 3 seconds
+  // Calibration (unchanged)
   long xSum = 0, ySum = 0;
-  const int delayMs = 25; // Delay between samples
-  const int samples = 3000 / delayMs; // e.g 3s at 25ms/sample => 120 samples
-  Serial.println("Calibrating joystick center...");
+  const int samples = 40; // Fewer samples for faster startup
+  Serial.println("Calibrating...");
   for (int i = 0; i < samples; ++i) {
     xSum += analogRead(JOY_X_PIN);
     ySum += analogRead(JOY_Y_PIN);
-    delay(delayMs);
+    delay(25);
   }
 
   calibratedXCenterDrift = 512 - xSum / samples;
-  calibratedYCenterDrift  = 512 - ySum / samples;
-  Serial.print("Calibration complete. X: ");
-  Serial.print((calibratedXCenterDrift >= 0 ? "+" : ""));
+  calibratedYCenterDrift = 512 - ySum / samples;
+  Serial.print("Calibration X:");
   Serial.print(calibratedXCenterDrift);
-  Serial.print(", Y: ");
-  Serial.print((calibratedYCenterDrift >= 0 ? "+" : ""));
+  Serial.print(" Y:");
   Serial.println(calibratedYCenterDrift);
 }
 
-
 void loop() {
-  // 1. Read Joystick and Button
-  int rawX = analogRead(JOY_X_PIN);     // Read X-axis value (0-1023)
-  int rawY = analogRead(JOY_Y_PIN);     // Read Y-axis value (0-1023)
-  bool buttonPressed = digitalRead(JOY_BUTTON_PIN) == LOW; // LOW if pressed (due to pullup)
+  // 1. Read and calibrate
+  int rawX = analogRead(JOY_X_PIN) + calibratedXCenterDrift;
+  int rawY = analogRead(JOY_Y_PIN) + calibratedYCenterDrift;
+  bool buttonPressed = (digitalRead(JOY_BUTTON_PIN) == LOW);
+  
+  // Constrain values to valid range
+  uint16_t xValue = constrain(rawX, 0, 1023);
+  uint16_t yValue = constrain(rawY, 0, 1023);
 
-  // Adjust values by subtracting the calibrated center
-  int xValue = rawX + calibratedXCenterDrift;
-  int yValue = rawY + calibratedYCenterDrift;
+  // 2. Prepare packed data with CRC
+  PackedData data;
+  data.x = xValue;
+  data.y = yValue;
+  data.btn = buttonPressed;
+  data.crc = calcCRC(xValue, yValue, buttonPressed);
 
-  // 2. Prepare Data to Send
-  JoystickData data; // Create an instance of our data structure
-  data.xValue = xValue;
-  data.yValue = yValue;
-  data.buttonPressed = buttonPressed;
-
-  // 3. Send the Data
-  // Send the data as a structured object.  This is much cleaner and more efficient.
-
-  // Attempt to send data
-  if (rf_driver.send((uint8_t *)&data, sizeof(data))) {
-    // Serial.println("Data queued for transmission.");
-    
-    // Wait for transmission to complete (with timeout)
-    unsigned long startTime = millis();
-    while (!rf_driver.waitPacketSent()) {
-      if (millis() - startTime > 2000) { // Timeout after 2 seconds
-        Serial.println("Error: Transmission timed out!");
-        break;
-      }
-    }
-    // Serial.println("Data transmitted successfully!");
-  } else {
-    Serial.println("Error: Failed to queue data!");
+  // 3. Send with triple retransmission
+  for (int i = 0; i < 3; i++) {  // Send 3 times for redundancy
+    rf_driver.send((uint8_t*)&data, sizeof(data));
+    rf_driver.waitPacketSent();
+    delay(5); // Short delay between transmits
   }
 
-
-  // 4. Print to Serial Monitor (for debugging)
-  Serial.print("X: ");
+  // 4. Debug output
+  Serial.print("X:");
   Serial.print(xValue);
-  Serial.print(", Y: ");
+  Serial.print(" Y:");
   Serial.print(yValue);
-  Serial.print(", Button: ");
-  Serial.println(buttonPressed);
+  Serial.print(" Btn:");
+  Serial.print(buttonPressed);
+  Serial.print(" CRC:");
+  Serial.println(data.crc, BIN);
 
-  delay(25); // Small delay before the next reading
+  delay(30); // Overall loop delay
 }
-
