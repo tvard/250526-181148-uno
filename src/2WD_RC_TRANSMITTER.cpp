@@ -8,8 +8,10 @@ const int JOY_X_PIN = A0;       // Joystick X-axis
 const int JOY_Y_PIN = A1;       // Joystick Y-axis 
 const int JOY_BUTTON_PIN = 16;  // Joystick button 
 
+const int LOOP_DELAY_MS = 1;   // how often we run the main loop
+
 // Create an instance of the rf_driver radio object with optimized settings
-RH_ASK rf_driver(1000, 11, 12); // TX=11, RX=12 (RX unused in transmitter)
+RH_ASK rf_driver(1200, 11, 12); // TX=11, RX=12 (RX unused in transmitter)
 
 // Packed data structure (4 bytes total)
 struct PackedData {
@@ -33,9 +35,10 @@ void setup() {
   
   // Initialize with critical optimizations
   if (rf_driver.init()) {
-    rf_driver.crc();                   // Enable CRC checking
-    rf_driver.setPreambleLength(16);   // Longer preamble for sync
+    // rf_driver.crc();                   // Enable CRC checking
+    //    rf_driver.setPreambleLength(16);   // Longer preamble for sync
     rf_driver.setModeIdle();           // Prevent spurious transmissions
+    
     Serial.println("Radio initialized!");
   } else {
     Serial.println("Radio init failed!");
@@ -78,10 +81,10 @@ void loop() {
   data.crc = calcCRC(xValue, yValue, buttonPressed);
 
   // 3. Send with triple retransmission
-  for (int i = 0; i < 3; i++) {  // Send 3 times for redundancy
+  for (int i = 0; i < 1; i++) {  // Send n times for redundancy
     rf_driver.send((uint8_t*)&data, sizeof(data));
     rf_driver.waitPacketSent();
-    delay(5); // Short delay between transmits
+    // delay(5); // Short delay between transmits
   }
 
   // 4. Debug output
@@ -94,5 +97,5 @@ void loop() {
   Serial.print(" CRC:");
   Serial.println(data.crc, BIN);
 
-  delay(30); // Overall loop delay
+  delay(LOOP_DELAY_MS); // Overall loop delay
 }
