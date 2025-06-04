@@ -76,6 +76,18 @@ Receiver: 10nF ceramic between DATA and GND
 
     DATA  --  [10nF ceramic]    ---- GND
 
+
+## Bugs
+
+Big'uns:
+
+- MAJOR: Microcontroller turns off after active brake from full speed
+- MAJOR: Antenna issues. Trying different sizes and shapes - straight vs hellical. Boost Tx to ~10-12V, Maybe ground Rx?
+- MAJOR: Joystick stick drift due to bad breadboard - perfboard eveything (+ joystick?)
+
+Minor:
+- Loose shakey wires. finalize then perboard or pcb
+
 ## Future Improvements
 
 - Use MPU to keep car straight in manualMode in 

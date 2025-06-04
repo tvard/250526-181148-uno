@@ -6,12 +6,12 @@
 #include "MPU6050.h" // Changed to MPU6050 library which is more stable
 
 // Pin Definitions
-#define LEFT_MOTOR_IN1 2  // L293D In1 (pin 2)
-#define LEFT_MOTOR_IN2 3  // L293D In2 (pin 7)
-#define RIGHT_MOTOR_IN3 4 // L293D In3 (pin 10)
-#define RIGHT_MOTOR_IN4 7 // L293D In4 (pin 15)
-#define LEFT_MOTOR_EN 5   // L293D Enable1 (pin 1)
-#define RIGHT_MOTOR_EN 6  // L293D Enable2 (pin 9)
+#define RIGHT_MOTOR_IN1 2   // L293D In  (pin 2)
+#define RIGHT_MOTOR_IN2 3   // L293D In (pin 7)
+#define RIGHT_MOTOR_EN 5    // L293D Enable1 (pin 1)
+#define LEFT_MOTOR_IN1 4    // L293D In (pin 10)
+#define LEFT_MOTOR_IN2 7    // L293D In (pin 15)
+#define LEFT_MOTOR_EN 6     // L293D Enable2 (pin 9)
 
 #define CS_PIN 7
 #define BUZZER_PIN 10      // Active buzzer (as suggested)
@@ -21,14 +21,17 @@
 
 // Constants
 #define MAX_SPEED 255
-#define MIN_MOTOR_SPEED 75 // minimum speed to avoid stalling, can be adjusted
+#define MIN_MOTOR_SPEED 70 // minimum speed to avoid stalling, can be adjusted
+
+#define LEFT_OFFSET +5     // Offset for left motor speed
+#define RIGHT_OFFSET -5     // Offset for right motor speed
 
 #define MIN_DISTANCE 30   // Minimum distance in cm before turning
 #define TURN_TIME 800     // Time to turn in milliseconds
 #define SCAN_INTERVAL 300 // Time between distance measurements
 
-const int LOOP_DELAY_MS = 1;   // how often we run the main loop
-const int RAMP_STEP     = 20;   // how many speed units we change per loop, less = smoother but slower response
+const int LOOP_DELAY_MS = 1;    // how often we run the main loop
+const int RAMP_STEP     = 30;   // how many speed units we change per loop, less = smoother but slower response
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
@@ -71,7 +74,7 @@ MPU6050 mpu;
 float ax, ay, az;
 float gx, gy, gz;
 
-// Function prototypes (good practice)
+// Function prototypes (good practice) => must be declared here before usage below
 // void checkModeButton();
 void manualMode();
 // void autonomousMode();
@@ -84,6 +87,9 @@ void stopMotors();
 void beep(int duration);
 // void beepPattern(int beeps, int beepDuration);
 bool readRFSignals(); 
+
+String pad5(int val);
+String pad5f(float val);
 
 void setup()
 {
@@ -105,8 +111,8 @@ void setup()
   pinMode(LEFT_MOTOR_IN1, OUTPUT);
   pinMode(LEFT_MOTOR_IN2, OUTPUT);
   pinMode(LEFT_MOTOR_EN, OUTPUT);
-  pinMode(RIGHT_MOTOR_IN3, OUTPUT);
-  pinMode(RIGHT_MOTOR_IN4, OUTPUT);
+  pinMode(RIGHT_MOTOR_IN1, OUTPUT);
+  pinMode(RIGHT_MOTOR_IN2, OUTPUT);
   pinMode(RIGHT_MOTOR_EN, OUTPUT);
 
   // Initialize ultrasonic sensor pins
@@ -262,8 +268,10 @@ void manualMode()
   bool isRead = readRFSignals();
   bool skipSlewRate = false; // Flag to skip slew-rate control (e.g for sharp turns)
 
-  int correctedX = 1023 - joystickY;
-  int correctedY = 1023 - joystickX;
+  int correctedX = 1023 - joystickY;  // 0-1023 inverted Y
+  int correctedY = 1023 - joystickX;  // 0-1023 inverted X
+
+  correctedX = 1023 - correctedX; // Invert X again to match expected direction
 
   static int leftSpeed       = 0;
   static int rightSpeed      = 0;
@@ -292,7 +300,7 @@ void manualMode()
     rawRatioLR = constrain(rawRatioLR, -1.0, 1.0);
 
     // Quantize to nearest 0.n (n steps between -1 and +1)
-    float quantizeStep = 0.15f;
+    float quantizeStep = 0.10f;
     float steppedRatioLR = round(rawRatioLR / quantizeStep) * quantizeStep;
 
     // Serial.print(" | PRE-CHECK: Y="); Serial.print(correctedY);
@@ -304,19 +312,28 @@ void manualMode()
     // Serial.println();
 
     // in-place turn (L/R sharp turn) scenario (within n% of center )
-    if (abs(correctedY - 512) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= 0.15)
+    if (abs(correctedY - 512) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= quantizeStep * 1.0)
     {
       // map to speed range (capped because both wheels will move in opposite directions)
-      int sp = map((int)(fabs(steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 10); 
+      int sp = map((int)(fabs(steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 5); 
 
-      // For left turn, left wheel backward, right wheel forward; for right turn, opposite
-      targetLeft  = (steppedRatioLR < 0) ? sp : -sp;
-      targetRight = (steppedRatioLR < 0) ? -sp : sp;
+      // -ve ratio => left turn 
+      if (steppedRatioLR < 0) {
+        targetRight = sp;
+        
+        // large ratio bias => pivot turn, reverse other wheel 
+        if (steppedRatioLR <= -0.9) {
+          targetLeft = -sp;
+        }
+      }
+      // +ve ratio => right turn
+      else if (steppedRatioLR > 0) {
+        targetLeft = sp;
 
-      // only one wheel below certain LR for gentler turns
-      if( fabs(steppedRatioLR) < 0.75) {
-        if (targetLeft < 0) targetLeft = 0;
-        if (targetRight < 0) targetRight = 0;
+        // large ratio bias => pivot turn, reverse other wheel 
+        if (steppedRatioLR >= +0.9) {
+          targetRight = -sp;
+        }
       }
 
       skipSlewRate = true; // Mark as skip slew-rate
@@ -329,13 +346,13 @@ void manualMode()
       targetLeft  = sp;
       targetRight = sp;
 
-      if (fabs(steppedRatioLR) >= 0.25) {
+      if (fabs(steppedRatioLR) >= 0.60) {
         // If joystick is tilted left/right, adjust speeds for turning
-        targetLeft  *= (1.0 + steppedRatioLR);
-        targetRight *= (1.0 - steppedRatioLR);
-        skipSlewRate = false; // Reset skip slew-rate flag
+        targetLeft  *= (1.0 + steppedRatioLR / 2);
+        targetRight *= (1.0 - steppedRatioLR / 2);
       }
-
+      
+      skipSlewRate = false; // Reset skip slew-rate flag
       // TODO: use IMU to adjust targetLeft and targetRight to account for drift if it keep doing so, test first
     }
     else if (correctedY < backwardThreshold)
@@ -345,12 +362,13 @@ void manualMode()
       targetLeft  = -sp;
       targetRight = -sp;
 
-      if (fabs(steppedRatioLR) >= 0.25) {
+      if (fabs(steppedRatioLR) >= 0.60) {
         // If joystick is tilted left/right, adjust speeds for turning
-        targetLeft  *= (1.0 + steppedRatioLR);
-        targetRight *= (1.0 - steppedRatioLR);
-        skipSlewRate = false; // Reset skip slew-rate flag
+        targetLeft  *= (1.0 + steppedRatioLR / 2);
+        targetRight *= (1.0 - steppedRatioLR / 2);
       }
+      
+      skipSlewRate = false; // Reset skip slew-rate flag
     }
     else
     { // deadzone → targets zero
@@ -420,48 +438,48 @@ void manualMode()
     prevLeftSpeed = leftSpeed;
     prevRightSpeed = rightSpeed;
 
-    // Print movement direction for debugging
-    if (targetLeft > 0 && targetRight > 0) {
-      Serial.print("forward");
-    } else if (targetLeft < 0 && targetRight < 0) {
-      Serial.print("backward");
-    } else if (targetLeft == 0 && targetRight == 0) {
-      Serial.print("none");
-    } else if (targetLeft > targetRight) {
-      Serial.print("left");
-    } else if (targetRight > targetLeft) {
-      Serial.print("right");
-    } else {
-      Serial.print("mixed");
-    }
+    // DEBUG
+  Serial.print("Dir: ");
+  if (leftSpeed > 0 && rightSpeed > 0) {
+    Serial.print("FORWD");
+  } else if (leftSpeed < 0 && rightSpeed < 0) {
+    Serial.print("BCKWD");
+  } else if (leftSpeed == 0 && rightSpeed == 0) {
+    Serial.print("STOP ");
+  } else if (leftSpeed < rightSpeed) {
+    Serial.print("LEFT ");
+  } else if (rightSpeed < leftSpeed) {
+    Serial.print("RIGHT");
+  } else {
+    Serial.print("MIXED"); // not ok good
+  }
 
-    Serial.print(" with ratio: ");
-    Serial.print(steppedRatioLR, 2); // Print the ratio for debugging
-    Serial.print(" | Target Spd: ");
-    Serial.print(targetLeft);
+    Serial.print(" Q LR: ");
+    Serial.print(pad5f(steppedRatioLR)); // stepped ratio
+    Serial.print(" (");
+    Serial.print(pad5f(rawRatioLR));
+    Serial.print(")");
+
+    Serial.print(" Targ Spd: ");
+    Serial.print(pad5(targetLeft));
+    Serial.print("");
+    Serial.print(pad5(targetRight));
+
+    Serial.print(" Curr Spd: ");
+    Serial.print(pad5(leftSpeed));
     Serial.print(" | ");
-    Serial.print(targetRight);
-    Serial.print(" | Current Spd: ");
-    Serial.print(leftSpeed);
-    Serial.print(" | ");
-    Serial.print(rightSpeed);
-    Serial.print(" | Slew: ");
+    Serial.print(pad5(rightSpeed));
+
+    Serial.print(" Slew: ");
     Serial.print(!skipSlewRate ? "Y" : "N");
-    Serial.print(" | Braking: ");
+    Serial.print(" | ");
+    Serial.print("Brk: ");
     Serial.print(brakingApplied ? "Y" : "N");
 
-
-    // DEBUG
-    Serial.print(" | X: ");
-    Serial.print(correctedX);
-    Serial.print(" | Y: ");
-    Serial.print(correctedY);
-    Serial.print(" | Raw LR: ");
-    Serial.print(rawRatioLR, 2); // Print the raw ratio for debugging
-    Serial.print(" | Stepped LR: ");
-    Serial.print(steppedRatioLR, 2); // Print the stepped ratio for debugging
-    
-
+    Serial.print(" XY: ");
+    Serial.print(pad5(correctedX));
+    Serial.print(" | ");
+    Serial.print(pad5(correctedY));
 
     Serial.println();
 
@@ -639,44 +657,83 @@ bool readRFSignals()
 /// Sets the speeds of the left and right motors based on the provided speed values.
 /// Speeds are constrained to the range of -MAX_SPEED to MAX_SPEED.
 /// @param leftSpeed 
-/// The speed for the left motor. Positive values move the motor forward, negative values move it backward.
+/// The speed for the left motor. Positive values move the motor backward, negative values move it forward (RWD).
 /// @param rightSpeed 
-/// The speed for the right motor. Positive values move the motor forward, negative values move it backward.
+/// The speed for the right motor. Positive values move the motor backward, negative values move it forward (RWD).
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
   // Constrain speeds to valid range
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
-  // Set left motor direction and speed
+  if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) && 
+      ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0))){
+    // Apply offsets to adjust for motor differences (applies only if both wheels in motion and in same direction)
+    leftSpeed += leftSpeed > 0 ? LEFT_OFFSET : -LEFT_OFFSET;
+    rightSpeed += rightSpeed > 0 ? RIGHT_OFFSET : -RIGHT_OFFSET;
+
+    // if any of the speeds is below the minimum, but the other is above, creep both up until threshold reached for both
+    if (abs(leftSpeed) < MIN_MOTOR_SPEED || abs(rightSpeed) < MIN_MOTOR_SPEED){
+      int diff = MIN_MOTOR_SPEED - min(abs(leftSpeed), abs(rightSpeed));  // smallest one is the one below threshold
+
+      leftSpeed += leftSpeed > 0 ? diff : -diff;
+      rightSpeed += rightSpeed > 0 ? diff : -diff;
+    }
+
+    // Maintain the offset: keep the difference between left and right speeds constant after adjustments
+    int diff = leftSpeed - rightSpeed;
+
+    // Constrain leftSpeed and rightSpeed, but preserve their difference
+    if (leftSpeed > MAX_SPEED) {
+      leftSpeed = MAX_SPEED;
+      rightSpeed = leftSpeed - diff;
+    } else if (leftSpeed < -MAX_SPEED) {
+      leftSpeed = -MAX_SPEED;
+      rightSpeed = leftSpeed - diff;
+    }
+
+    if (rightSpeed > MAX_SPEED) {
+      rightSpeed = MAX_SPEED;
+      leftSpeed = rightSpeed + diff;
+    } else if (rightSpeed < -MAX_SPEED) {
+      rightSpeed = -MAX_SPEED;
+      leftSpeed = rightSpeed + diff;
+    }
+
+    // Final clamp in case both exceeded in opposite directions (failsafe)
+    leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
+    rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
+  }
+
+  // Set left motor direction and speed (RWD: positive = backward, negative = forward)
   if (leftSpeed >= 0)
   {
-    // Forward
-    digitalWrite(LEFT_MOTOR_IN1, HIGH);
-    digitalWrite(LEFT_MOTOR_IN2, LOW);
+    // Backward (RWD)
+    digitalWrite(LEFT_MOTOR_IN1, LOW);
+    digitalWrite(LEFT_MOTOR_IN2, HIGH);
     analogWrite(LEFT_MOTOR_EN, leftSpeed);
   }
   else
   {
-    // Backward
-    digitalWrite(LEFT_MOTOR_IN1, LOW);
-    digitalWrite(LEFT_MOTOR_IN2, HIGH);
+    // Forward (RWD)
+    digitalWrite(LEFT_MOTOR_IN1, HIGH);
+    digitalWrite(LEFT_MOTOR_IN2, LOW);
     analogWrite(LEFT_MOTOR_EN, -leftSpeed);
   }
 
-  // Set right motor direction and speed
+  // Set right motor direction and speed (RWD: positive = backward, negative = forward)
   if (rightSpeed >= 0)
   {
-    // Forward
-    digitalWrite(RIGHT_MOTOR_IN3, HIGH);
-    digitalWrite(RIGHT_MOTOR_IN4, LOW);
+    // Backward (RWD)
+    digitalWrite(RIGHT_MOTOR_IN1, LOW);
+    digitalWrite(RIGHT_MOTOR_IN2, HIGH);
     analogWrite(RIGHT_MOTOR_EN, rightSpeed);
   }
   else
   {
-    // Backward
-    digitalWrite(RIGHT_MOTOR_IN3, LOW);
-    digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+    // Forward (RWD)
+    digitalWrite(RIGHT_MOTOR_IN1, HIGH);
+    digitalWrite(RIGHT_MOTOR_IN2, LOW);
     analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
   }
 }
@@ -689,8 +746,8 @@ void stopMotors()
   digitalWrite(LEFT_MOTOR_IN2, LOW);
   analogWrite(LEFT_MOTOR_EN, 0);
 
-  digitalWrite(RIGHT_MOTOR_IN3, LOW);
-  digitalWrite(RIGHT_MOTOR_IN4, LOW);
+  digitalWrite(RIGHT_MOTOR_IN1, LOW);
+  digitalWrite(RIGHT_MOTOR_IN2, LOW);
   analogWrite(RIGHT_MOTOR_EN, 0);
 }
 
@@ -705,8 +762,8 @@ void stopMotors()
 //   digitalWrite(LEFT_MOTOR_IN2, HIGH);
 //   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
 
-//   digitalWrite(RIGHT_MOTOR_IN3, HIGH);
-//   digitalWrite(RIGHT_MOTOR_IN4, LOW);
+//   digitalWrite(RIGHT_MOTOR_IN1, HIGH);
+//   digitalWrite(RIGHT_MOTOR_IN2, LOW);
 //   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
 
 //   // Time-based turn - approximately 90 degrees
@@ -726,8 +783,8 @@ void stopMotors()
 //   digitalWrite(LEFT_MOTOR_IN2, LOW);
 //   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
 
-//   digitalWrite(RIGHT_MOTOR_IN3, LOW);
-//   digitalWrite(RIGHT_MOTOR_IN4, HIGH);
+//   digitalWrite(RIGHT_MOTOR_IN1, LOW);
+//   digitalWrite(RIGHT_MOTOR_IN2, HIGH);
 //   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
 
 //   // Time-based turn - approximately 90 degrees
@@ -754,4 +811,17 @@ void beep(int duration)
 //   }
 // }
 
+
+String pad5(int val) {
+  char buf[7];
+  snprintf(buf, sizeof(buf), "%5d", val);
+  return String(buf);
+}
+
+String pad5f(float val) {
+  char buf[7]; // Make sure this buffer is large enough for your output
+  // dtostrf(float_value, total_width, decimal_places, char_array);
+  dtostrf(val, 5, 2, buf); // 5 total width, 2 decimal places
+  return String(buf);
+}
 
