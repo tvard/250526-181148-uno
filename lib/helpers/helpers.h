@@ -1,6 +1,8 @@
 #pragma once
 
-#include <Arduino.h>  // for String type
+#ifdef ARDUINO
+#include <Arduino.h>
+#endif
 
 // Constants
 const int MAX_SPEED        = 255;
@@ -16,8 +18,14 @@ const int SCAN_INTERVAL    = 300; // Time between distance measurements
 const int LOOP_DELAY_MS = 1; // how often we run the main loop
 const int RAMP_STEP = 30;    // how many speed units we change per loop, less = smoother but slower response
 
-
 // function declarations
 int slewRateLimit(int current, int target);
+
+#ifdef ARDUINO
 String pad5(int val);
 String pad5f(float val);
+#else
+#include <string>
+std::string pad5(int val);
+std::string pad5f(float val);
+#endif

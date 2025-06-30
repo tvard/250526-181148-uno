@@ -1,0 +1,6 @@
+{
+    "files.associations": {
+        "*.extension": "bat",
+        "helpers.h": "c"
+    }
+}
