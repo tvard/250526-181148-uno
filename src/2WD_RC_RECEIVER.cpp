@@ -6,32 +6,32 @@
 #include "MPU6050.h" // Changed to MPU6050 library which is more stable
 
 // Pin Definitions
-#define RIGHT_MOTOR_IN1 2   // L293D In  (pin 2)
-#define RIGHT_MOTOR_IN2 3   // L293D In (pin 7)
-#define RIGHT_MOTOR_EN 5    // L293D Enable1 (pin 1)
-#define LEFT_MOTOR_IN1 4    // L293D In (pin 10)
-#define LEFT_MOTOR_IN2 7    // L293D In (pin 15)
-#define LEFT_MOTOR_EN 6     // L293D Enable2 (pin 9)
+const int RIGHT_MOTOR_IN1 = 2;
+const int RIGHT_MOTOR_IN2 = 3;
+const int RIGHT_MOTOR_EN  = 5;
+const int LEFT_MOTOR_IN1  = 4;
+const int LEFT_MOTOR_IN2  = 7;
+const int LEFT_MOTOR_EN   = 6;
 
-#define CS_PIN 7
-#define BUZZER_PIN 10      // Active buzzer (as suggested)
-#define MODE_BUTTON_PIN 6  // Push button for mode toggle -- CHANGED TO PIN 6 AS PER YOUR COMMENT
-#define ULTRASONIC_TRIG 12 // HC-SR04 Trigger pin
-#define ULTRASONIC_ECHO 13 // HC-SR04 Echo pin
+const int CS_PIN           = 7;
+const int BUZZER_PIN       = 10;
+const int MODE_BUTTON_PIN  = 6;
+const int ULTRASONIC_TRIG  = 12;
+const int ULTRASONIC_ECHO  = 13;
 
 // Constants
-#define MAX_SPEED 255
-#define MIN_MOTOR_SPEED 70 // minimum speed to avoid stalling, can be adjusted
+const int MAX_SPEED        = 255;
+const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
 
-#define LEFT_OFFSET +5     // Offset for left motor speed
-#define RIGHT_OFFSET -5     // Offset for right motor speed
+const int LEFT_OFFSET      = +5;  // Offset for left motor speed
+const int RIGHT_OFFSET     = -5;  // Offset for right motor speed
 
-#define MIN_DISTANCE 30   // Minimum distance in cm before turning
-#define TURN_TIME 800     // Time to turn in milliseconds
-#define SCAN_INTERVAL 300 // Time between distance measurements
+const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
+const int TURN_TIME        = 800;     // Time to turn in milliseconds
+const int SCAN_INTERVAL    = 300; // Time between distance measurements
 
-const int LOOP_DELAY_MS = 1;    // how often we run the main loop
-const int RAMP_STEP     = 30;   // how many speed units we change per loop, less = smoother but slower response
+const int LOOP_DELAY_MS = 1; // how often we run the main loop
+const int RAMP_STEP = 30;    // how many speed units we change per loop, less = smoother but slower response
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
@@ -46,11 +46,12 @@ struct JoystickData
   bool buttonPressed;
 };
 
-struct PackedData {
-  uint16_t x : 10;  // 10 bits for X (0-1023)
-  uint16_t y : 10;  // 10 bits for Y (0-1023)
-  uint8_t btn : 1;   // Button state
-  uint8_t crc : 5;   // Simple checksum (5 bits)
+struct PackedData
+{
+  uint16_t x : 10; // 10 bits for X (0-1023)
+  uint16_t y : 10; // 10 bits for Y (0-1023)
+  uint8_t btn : 1; // Button state
+  uint8_t crc : 5; // Simple checksum (5 bits)
 };
 
 PackedData rcvData;
