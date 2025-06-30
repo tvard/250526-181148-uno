@@ -1,3 +1,22 @@
+/*
+ *      
+ *      Test Suite for Arduino/PlatformIO Projects, Instructions:
+ * 
+ *      To run all unit tests on the native environment, use:
+ *        pio test -e native
+ *      
+ *      For more detailed output, add verbosity flags:
+ *        pio test -e native -v      // verbose
+ *        pio test -e native -vv     // more verbose
+ *        pio test -e native -vvv    // most verbose
+ *      
+ *      If you encounter build issues, a clean build may help:
+ *        pio run -t clean
+ *      
+ *      Note: These tests are logic-only and do not require hardware.
+ *      They are designed to run on the native platform, simulating the Arduino environment.
+ */
+
 #include "../.pio/libdeps/native/Unity/src/unity.h"
 #include "helpers.h"
 // #include "motor_helpers.cpp"
