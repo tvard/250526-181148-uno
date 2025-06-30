@@ -374,42 +374,29 @@ void manualMode()
     { // deadzone → targets zero
       targetLeft  = 0;
       targetRight = 0;
+      skipSlewRate = true; // Skip slew-rate for zero targets
     }
 
-    if (!skipSlewRate) {
-      // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft
-      auto slew = [&](int current, int target){
-        int uCurrent = abs(current), uTarget = abs(target);
-        int uResult = 0;
-        if (uCurrent < uTarget)  uResult = constrain(min(uCurrent + RAMP_STEP, uTarget), MIN_MOTOR_SPEED, MAX_SPEED);    // ramp-up forwards
-        else uResult = uTarget; // ramp-down or stay at target
-
-        if (target < 0) return -uResult;      // if target is negative, return negative speed
-        else if (target > 0) return uResult;  // if target is positive, return positive speed
-        else return uResult;                  // if target is zero, return zero
-      };
-
-      if (abs(correctedY - 512) < joystickDeadzone) {
-        targetLeft = 0;
-        targetRight = 0;
-      }
-
-      leftSpeed  = slew(leftSpeed,  targetLeft);
-      rightSpeed = slew(rightSpeed, targetRight);
-    }
-    else {
-      // If we skipped slew-rate, just set to target immediately
+    if (skipSlewRate) {
+      // For sharp turns / fast reactions / pivots, skip slew-rate and set speeds to target immediately
       leftSpeed  = targetLeft;
       rightSpeed = targetRight;
     }
-
-
+    else {
+      // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft.
+      if (leftSpeed != targetLeft) {
+        leftSpeed = slewRateLimit(leftSpeed, targetLeft);
+      }
+      if (rightSpeed != targetRight) {
+        rightSpeed = slewRateLimit(rightSpeed, targetRight);
+      }
+    }
 
     static int prevLeftSpeed = 0;
     static int prevRightSpeed = 0;
     static bool brakingApplied = false;
 
-    // 4) Set motor speeds, apply braking if needed7
+    // 4) Set motor speeds, apply braking if needed
     if (targetLeft == 0 && targetRight == 0 && 
         (abs(prevLeftSpeed) > 0 || abs(prevRightSpeed) > 0)) 
     {
@@ -823,5 +810,27 @@ String pad5f(float val) {
   // dtostrf(float_value, total_width, decimal_places, char_array);
   dtostrf(val, 5, 2, buf); // 5 total width, 2 decimal places
   return String(buf);
+}
+
+// Helper function for slew-rate control (formerly lambda in manualMode)
+static int slewRateLimit(int current, int target) {
+  int uCurrent = abs(current), uTarget = abs(target);
+  int uResult = 0;
+  if (uCurrent < uTarget) {     
+    int next = min(uCurrent + RAMP_STEP, uTarget);                    // Ramp up, but only apply MIN_MOTOR_SPEED threshold if above "very low" threshold 
+
+    if (next < MIN_MOTOR_SPEED / 2) { uResult = 0; }                  // treat as stopped if below "very low" threshold
+    else if (next < MIN_MOTOR_SPEED) { uResult = next; }              // allow ramping up through the low region
+    else { uResult = constrain(next, MIN_MOTOR_SPEED, MAX_SPEED); }   // Ramp up to target, but not below MIN_MOTOR_SPEED
+  } else {
+    // Ramp down or stay at target
+    if (uTarget < MIN_MOTOR_SPEED / 2) {
+      uResult = 0; // treat as stopped if target is very low
+    } else {
+      uResult = uTarget;
+    }
+  }
+
+  return (target < 0) ? -uResult : uResult; // negative if target < 0, else positive or zero
 }
 
