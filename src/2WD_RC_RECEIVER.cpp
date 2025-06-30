@@ -216,7 +216,7 @@ void loop()
   // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
   delay(LOOP_DELAY_MS);
-  
+
   // // Control based on current mode
   // if (autoMode) {
   //   autonomousMode();
@@ -268,20 +268,20 @@ void manualMode()
   bool isRead = readRFSignals();
   bool skipSlewRate = false; // Flag to skip slew-rate control (e.g for sharp turns)
 
-  int correctedX = 1023 - joystickY;  // 0-1023 inverted Y
-  int correctedY = 1023 - joystickX;  // 0-1023 inverted X
+  int correctedX = 1023 - joystickY; // 0-1023 inverted Y
+  int correctedY = 1023 - joystickX; // 0-1023 inverted X
 
   correctedX = 1023 - correctedX; // Invert X again to match expected direction
 
-  static int leftSpeed       = 0;
-  static int rightSpeed      = 0;
-  static int targetLeft      = 0;
-  static int targetRight     = 0;
-  static int rfLostCounter   = 0;
+  static int leftSpeed = 0;
+  static int rightSpeed = 0;
+  static int targetLeft = 0;
+  static int targetRight = 0;
+  static int rfLostCounter = 0;
 
   /**
    * Joystick center variance
-   * X	    Y 	
+   * X	    Y
    * 547	  523	  MIN
    * 565	  540	  MAX
    * 18	    17	  Variance
@@ -291,10 +291,9 @@ void manualMode()
   {
     // 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
     //    constaint to MIN_MOTOR_SPEED, maxMotorSpeed and apply ramping
-    const int joystickDeadzone = 18 ; // deadzone around center based on joystick variance
-    const int forwardThreshold = 512 + joystickDeadzone; // center = 512, forward = 1023  (center can change with usage)
-    const int backwardThreshold= 512 - joystickDeadzone; // center = 512, backward = 0
-    
+    const int joystickDeadzone = 18;                      // deadzone around center based on joystick variance
+    const int forwardThreshold = 512 + joystickDeadzone;  // center = 512, forward = 1023  (center can change with usage)
+    const int backwardThreshold = 512 - joystickDeadzone; // center = 512, backward = 0
 
     float rawRatioLR = ((float)correctedX - 512.0) / 512.0; // ratio of left/right stick deflection, centered at 0
     rawRatioLR = constrain(rawRatioLR, -1.0, 1.0);
@@ -315,23 +314,27 @@ void manualMode()
     if (abs(correctedY - 512) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= quantizeStep * 1.0)
     {
       // map to speed range (capped because both wheels will move in opposite directions)
-      int sp = map((int)(fabs(steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 5); 
+      int sp = map((int)(fabs(steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 5);
 
-      // -ve ratio => left turn 
-      if (steppedRatioLR < 0) {
+      // -ve ratio => left turn
+      if (steppedRatioLR < 0)
+      {
         targetRight = sp;
-        
-        // large ratio bias => pivot turn, reverse other wheel 
-        if (steppedRatioLR <= -0.9) {
+
+        // large ratio bias => pivot turn, reverse other wheel
+        if (steppedRatioLR <= -0.9)
+        {
           targetLeft = -sp;
         }
       }
       // +ve ratio => right turn
-      else if (steppedRatioLR > 0) {
+      else if (steppedRatioLR > 0)
+      {
         targetLeft = sp;
 
-        // large ratio bias => pivot turn, reverse other wheel 
-        if (steppedRatioLR >= +0.9) {
+        // large ratio bias => pivot turn, reverse other wheel
+        if (steppedRatioLR >= +0.9)
+        {
           targetRight = -sp;
         }
       }
@@ -343,15 +346,16 @@ void manualMode()
     {
       int sp = map(constrain(correctedY, forwardThreshold, 1023), forwardThreshold, 1023, 0, MAX_SPEED);
       sp = constrain(sp, MIN_MOTOR_SPEED, MAX_SPEED);
-      targetLeft  = sp;
+      targetLeft = sp;
       targetRight = sp;
 
-      if (fabs(steppedRatioLR) >= 0.60) {
+      if (fabs(steppedRatioLR) >= 0.60)
+      {
         // If joystick is tilted left/right, adjust speeds for turning
-        targetLeft  *= (1.0 + steppedRatioLR / 2);
+        targetLeft *= (1.0 + steppedRatioLR / 2);
         targetRight *= (1.0 - steppedRatioLR / 2);
       }
-      
+
       skipSlewRate = false; // Reset skip slew-rate flag
       // TODO: use IMU to adjust targetLeft and targetRight to account for drift if it keep doing so, test first
     }
@@ -359,35 +363,40 @@ void manualMode()
     {
       int sp = map(constrain(correctedY, 0, backwardThreshold), backwardThreshold, 0, 0, MAX_SPEED);
       sp = constrain(sp, MIN_MOTOR_SPEED, MAX_SPEED);
-      targetLeft  = -sp;
+      targetLeft = -sp;
       targetRight = -sp;
 
-      if (fabs(steppedRatioLR) >= 0.60) {
+      if (fabs(steppedRatioLR) >= 0.60)
+      {
         // If joystick is tilted left/right, adjust speeds for turning
-        targetLeft  *= (1.0 + steppedRatioLR / 2);
+        targetLeft *= (1.0 + steppedRatioLR / 2);
         targetRight *= (1.0 - steppedRatioLR / 2);
       }
-      
+
       skipSlewRate = false; // Reset skip slew-rate flag
     }
     else
     { // deadzone → targets zero
-      targetLeft  = 0;
+      targetLeft = 0;
       targetRight = 0;
       skipSlewRate = true; // Skip slew-rate for zero targets
     }
 
-    if (skipSlewRate) {
+    if (skipSlewRate)
+    {
       // For sharp turns / fast reactions / pivots, skip slew-rate and set speeds to target immediately
-      leftSpeed  = targetLeft;
+      leftSpeed = targetLeft;
       rightSpeed = targetRight;
     }
-    else {
+    else
+    {
       // 3) Apply slew-rate (ramp-up/down) to move leftSpeed → targetLeft.
-      if (leftSpeed != targetLeft) {
+      if (leftSpeed != targetLeft)
+      {
         leftSpeed = slewRateLimit(leftSpeed, targetLeft);
       }
-      if (rightSpeed != targetRight) {
+      if (rightSpeed != targetRight)
+      {
         rightSpeed = slewRateLimit(rightSpeed, targetRight);
       }
     }
@@ -397,49 +406,64 @@ void manualMode()
     static bool brakingApplied = false;
 
     // 4) Set motor speeds, apply braking if needed
-    if (targetLeft == 0 && targetRight == 0 && 
-        (abs(prevLeftSpeed) > 0 || abs(prevRightSpeed) > 0)) 
+    if (targetLeft == 0 && targetRight == 0 &&
+        (abs(prevLeftSpeed) > 0 || abs(prevRightSpeed) > 0))
     {
-        if (!brakingApplied) {
-            // Apply reverse pulse for braking
-            setMotorSpeeds(-prevLeftSpeed/4, -prevRightSpeed/4);
-            delay(15);
-            brakingApplied = true;
-            
-            // Immediately zero speeds after braking
-            leftSpeed = 0;
-            rightSpeed = 0;
-        }
-    } else {
-        brakingApplied = false;
+      if (!brakingApplied)
+      {
+        // Apply reverse pulse for braking
+        setMotorSpeeds(-prevLeftSpeed / 4, -prevRightSpeed / 4);
+        delay(15);
+        brakingApplied = true;
+
+        // Immediately zero speeds after braking
+        leftSpeed = 0;
+        rightSpeed = 0;
+      }
+    }
+    else
+    {
+      brakingApplied = false;
     }
 
     // Only set motor speeds if braking was not just applied
-    if (!brakingApplied) {
-        // Apply minimum speed threshold only at output stage
-        int outputLeft = (abs(leftSpeed) >= MIN_MOTOR_SPEED) ? leftSpeed : 0;
-        int outputRight = (abs(rightSpeed) >= MIN_MOTOR_SPEED) ? rightSpeed : 0;
-        setMotorSpeeds(outputLeft, outputRight);
+    if (!brakingApplied)
+    {
+      // Apply minimum speed threshold only at output stage
+      int outputLeft = (abs(leftSpeed) >= MIN_MOTOR_SPEED) ? leftSpeed : 0;
+      int outputRight = (abs(rightSpeed) >= MIN_MOTOR_SPEED) ? rightSpeed : 0;
+      setMotorSpeeds(outputLeft, outputRight);
     }
-    
+
     prevLeftSpeed = leftSpeed;
     prevRightSpeed = rightSpeed;
 
     // DEBUG
-  Serial.print("Dir: ");
-  if (leftSpeed > 0 && rightSpeed > 0) {
-    Serial.print("FORWD");
-  } else if (leftSpeed < 0 && rightSpeed < 0) {
-    Serial.print("BCKWD");
-  } else if (leftSpeed == 0 && rightSpeed == 0) {
-    Serial.print("STOP ");
-  } else if (leftSpeed < rightSpeed) {
-    Serial.print("LEFT ");
-  } else if (rightSpeed < leftSpeed) {
-    Serial.print("RIGHT");
-  } else {
-    Serial.print("MIXED"); // not ok good
-  }
+    Serial.print("Dir: ");
+    if (leftSpeed > 0 && rightSpeed > 0)
+    {
+      Serial.print("FORWD");
+    }
+    else if (leftSpeed < 0 && rightSpeed < 0)
+    {
+      Serial.print("BCKWD");
+    }
+    else if (leftSpeed == 0 && rightSpeed == 0)
+    {
+      Serial.print("STOP ");
+    }
+    else if (leftSpeed < rightSpeed)
+    {
+      Serial.print("RIGHT");
+    }
+    else if (rightSpeed < leftSpeed)
+    {
+      Serial.print("LEFT ");
+    }
+    else
+    {
+      Serial.print("MIXED"); // not ok good
+    }
 
     Serial.print(" Q LR: ");
     Serial.print(pad5f(steppedRatioLR)); // stepped ratio
@@ -477,12 +501,12 @@ void manualMode()
     // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
     if (rfLostCounter++ * LOOP_DELAY_MS > 440 || skipSlewRate)
     {
-      leftSpeed  = 0;
+      leftSpeed = 0;
       rightSpeed = 0;
-      
+
       setMotorSpeeds(leftSpeed, rightSpeed);
       rfLostCounter = 0;
-      Serial.println("RF SIGNAL LOSS: STOPPING...");  
+      Serial.println("RF SIGNAL LOSS: STOPPING...");
     }
   }
 
@@ -500,40 +524,41 @@ void manualMode()
 }
 
 // Simple CRC calculation (XOR-based)
-uint8_t calcCRC(uint16_t x, uint16_t y, bool btn) {
+uint8_t calcCRC(uint16_t x, uint16_t y, bool btn)
+{
   return (x ^ y ^ btn) & 0x1F; // Use 5-bit CRC
 }
 
-/// @brief 
+/// @brief
 /// Reads RF signals from the joystick transmitter and updates global joystick variables.
-/// @return 
+/// @return
 /// Returns true if data was successfully received and updated, false otherwise.
 bool readRFSignals()
 {
   uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
   uint8_t buflen = sizeof(buf);
 
-  if (rf_driver.recv(buf, &buflen)) {
+  if (rf_driver.recv(buf, &buflen))
+  {
     // Copy to struct
     memcpy(&rcvData, buf, min(buflen, sizeof(rcvData)));
-    
+
     // Verify CRC
-    if (rcvData.crc == calcCRC(rcvData.x, rcvData.y, rcvData.btn)) {
+    if (rcvData.crc == calcCRC(rcvData.x, rcvData.y, rcvData.btn))
+    {
       // Valid data!
       joystickX = rcvData.x;
       joystickY = rcvData.y;
       joystickButton = rcvData.btn;
 
       return true;
-
     }
   }
 
   return false;
 }
 
-
-// /// @brief 
+// /// @brief
 // /// WIP
 // void autonomousMode()
 // {
@@ -640,12 +665,12 @@ bool readRFSignals()
 //   return distance;
 // }
 
-/// @brief  
+/// @brief
 /// Sets the speeds of the left and right motors based on the provided speed values.
 /// Speeds are constrained to the range of -MAX_SPEED to MAX_SPEED.
-/// @param leftSpeed 
+/// @param leftSpeed
 /// The speed for the left motor. Positive values move the motor backward, negative values move it forward (RWD).
-/// @param rightSpeed 
+/// @param rightSpeed
 /// The speed for the right motor. Positive values move the motor backward, negative values move it forward (RWD).
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
@@ -653,15 +678,17 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
-  if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) && 
-      ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0))){
+  if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) &&
+      ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0)))
+  {
     // Apply offsets to adjust for motor differences (applies only if both wheels in motion and in same direction)
     leftSpeed += leftSpeed > 0 ? LEFT_OFFSET : -LEFT_OFFSET;
     rightSpeed += rightSpeed > 0 ? RIGHT_OFFSET : -RIGHT_OFFSET;
 
     // if any of the speeds is below the minimum, but the other is above, creep both up until threshold reached for both
-    if (abs(leftSpeed) < MIN_MOTOR_SPEED || abs(rightSpeed) < MIN_MOTOR_SPEED){
-      int diff = MIN_MOTOR_SPEED - min(abs(leftSpeed), abs(rightSpeed));  // smallest one is the one below threshold
+    if (abs(leftSpeed) < MIN_MOTOR_SPEED || abs(rightSpeed) < MIN_MOTOR_SPEED)
+    {
+      int diff = MIN_MOTOR_SPEED - min(abs(leftSpeed), abs(rightSpeed)); // smallest one is the one below threshold
 
       leftSpeed += leftSpeed > 0 ? diff : -diff;
       rightSpeed += rightSpeed > 0 ? diff : -diff;
@@ -671,18 +698,24 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
     int diff = leftSpeed - rightSpeed;
 
     // Constrain leftSpeed and rightSpeed, but preserve their difference
-    if (leftSpeed > MAX_SPEED) {
+    if (leftSpeed > MAX_SPEED)
+    {
       leftSpeed = MAX_SPEED;
       rightSpeed = leftSpeed - diff;
-    } else if (leftSpeed < -MAX_SPEED) {
+    }
+    else if (leftSpeed < -MAX_SPEED)
+    {
       leftSpeed = -MAX_SPEED;
       rightSpeed = leftSpeed - diff;
     }
 
-    if (rightSpeed > MAX_SPEED) {
+    if (rightSpeed > MAX_SPEED)
+    {
       rightSpeed = MAX_SPEED;
       leftSpeed = rightSpeed + diff;
-    } else if (rightSpeed < -MAX_SPEED) {
+    }
+    else if (rightSpeed < -MAX_SPEED)
+    {
       rightSpeed = -MAX_SPEED;
       leftSpeed = rightSpeed + diff;
     }
@@ -725,7 +758,7 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   }
 }
 
-/// @brief 
+/// @brief
 /// Stops both motors by setting their control pins to LOW and disabling PWM.
 void stopMotors()
 {
@@ -798,14 +831,15 @@ void beep(int duration)
 //   }
 // }
 
-
-String pad5(int val) {
+String pad5(int val)
+{
   char buf[7];
   snprintf(buf, sizeof(buf), "%5d", val);
   return String(buf);
 }
 
-String pad5f(float val) {
+String pad5f(float val)
+{
   char buf[7]; // Make sure this buffer is large enough for your output
   // dtostrf(float_value, total_width, decimal_places, char_array);
   dtostrf(val, 5, 2, buf); // 5 total width, 2 decimal places
