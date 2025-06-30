@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Arduino firmware uploader with automatic reset functionality.
-Optimized for PlatformIO integration with proper exit codes and progress output.
+Optimized for PlatformIO integration.
 """
 
 import os
@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-import serial 
+import serial  # type: ignore
 
 class ArduinoUploader:
     """Handles Arduino firmware uploads with automatic reset."""
