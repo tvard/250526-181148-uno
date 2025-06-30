@@ -1,9 +1,14 @@
+// For compiling with Unity (unit testing framework), you may need to mock or guard hardware-specific includes.
+// Example for Unity compatibility:
+
+// For PlatformIO/Arduino
 #include <Arduino.h>
 #include <Wire.h>
 #include "I2Cdev.h"
-#include <RH_ASK.h>  // Include the RadioHead library
-#include <SPI.h>     // Include the SPI library (required for RadioHead)
-#include "MPU6050.h" // Changed to MPU6050 library which is more stable
+#include <RH_ASK.h>  // RadioHead library for RF
+#include <SPI.h>     // SPI required by RadioHead
+#include "MPU6050.h" // MPU6050 IMU library
+#include "helpers.h"
 
 // Pin Definitions
 const int RIGHT_MOTOR_IN1 = 2;
@@ -19,19 +24,7 @@ const int MODE_BUTTON_PIN  = 6;
 const int ULTRASONIC_TRIG  = 12;
 const int ULTRASONIC_ECHO  = 13;
 
-// Constants
-const int MAX_SPEED        = 255;
-const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
 
-const int LEFT_OFFSET      = +5;  // Offset for left motor speed
-const int RIGHT_OFFSET     = -5;  // Offset for right motor speed
-
-const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
-const int TURN_TIME        = 800;     // Time to turn in milliseconds
-const int SCAN_INTERVAL    = 300; // Time between distance measurements
-
-const int LOOP_DELAY_MS = 1; // how often we run the main loop
-const int RAMP_STEP = 30;    // how many speed units we change per loop, less = smoother but slower response
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
@@ -832,45 +825,3 @@ void beep(int duration)
 //   }
 // }
 
-String pad5(int val)
-{
-  char buf[7];
-  snprintf(buf, sizeof(buf), "%5d", val);
-  return String(buf);
-}
-
-String pad5f(float val)
-{
-  char buf[7]; // Make sure this buffer is large enough for your output
-  // dtostrf(float_value, total_width, decimal_places, char_array);
-  dtostrf(val, 5, 2, buf); // 5 total width, 2 decimal places
-  return String(buf);
-}
-
-// Helper function for slew-rate control (formerly lambda in manualMode)
-/// @brief Limits the rate of change between the current and target speed values to ensure smooth acceleration and deceleration.
-/// @param current The current speed value.
-/// @param target The desired target speed value.
-/// @return The new speed value after applying the slew rate limit.
-static int slewRateLimit(int current, int target)
-{
-  int uCurrent = abs(current), uTarget = abs(target);
-  int uResult = 0;
-
-  if (uTarget < MIN_MOTOR_SPEED && uCurrent < MIN_MOTOR_SPEED)
-  { // floor to zero if both current and target are below MIN_MOTOR_SPEED
-    uResult = 0;
-  }
-  else if (uCurrent < uTarget)
-  { // Ramp up; only apply MIN_MOTOR_SPEED threshold if target speed is above MIN_MOTOR_SPEED
-    int next = min(uCurrent + RAMP_STEP, uTarget);
-    uResult = constrain(next, MIN_MOTOR_SPEED, MAX_SPEED);
-  }
-  else if (uCurrent > uTarget)
-  { // Ramp down or stay at target
-    int next = max(uCurrent - RAMP_STEP, uTarget);
-    uResult = (uTarget < MIN_MOTOR_SPEED && next <= MIN_MOTOR_SPEED) ? 0 : constrain(next, MIN_MOTOR_SPEED, MAX_SPEED);
-  }
-
-  return (target < 0) ? -uResult : uResult; // negative if target < 0, else positive or zero
-}
