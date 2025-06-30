@@ -56,7 +56,6 @@ struct PackedData
 
 PackedData rcvData;
 
-
 // Control variables
 bool autoMode = false;            // Start in manual mode
 unsigned long lastModeChange = 0; // Debounce button
@@ -87,10 +86,11 @@ void stopMotors();
 // void turnRight(int angle);
 void beep(int duration);
 // void beepPattern(int beeps, int beepDuration);
-bool readRFSignals(); 
+bool readRFSignals();
 
 String pad5(int val);
 String pad5f(float val);
+static int slewRateLimit(int current, int target);
 
 void setup()
 {
@@ -848,24 +848,29 @@ String pad5f(float val)
 }
 
 // Helper function for slew-rate control (formerly lambda in manualMode)
-static int slewRateLimit(int current, int target) {
+/// @brief Limits the rate of change between the current and target speed values to ensure smooth acceleration and deceleration.
+/// @param current The current speed value.
+/// @param target The desired target speed value.
+/// @return The new speed value after applying the slew rate limit.
+static int slewRateLimit(int current, int target)
+{
   int uCurrent = abs(current), uTarget = abs(target);
   int uResult = 0;
-  if (uCurrent < uTarget) {     
-    int next = min(uCurrent + RAMP_STEP, uTarget);                    // Ramp up, but only apply MIN_MOTOR_SPEED threshold if above "very low" threshold 
 
-    if (next < MIN_MOTOR_SPEED / 2) { uResult = 0; }                  // treat as stopped if below "very low" threshold
-    else if (next < MIN_MOTOR_SPEED) { uResult = next; }              // allow ramping up through the low region
-    else { uResult = constrain(next, MIN_MOTOR_SPEED, MAX_SPEED); }   // Ramp up to target, but not below MIN_MOTOR_SPEED
-  } else {
-    // Ramp down or stay at target
-    if (uTarget < MIN_MOTOR_SPEED / 2) {
-      uResult = 0; // treat as stopped if target is very low
-    } else {
-      uResult = uTarget;
-    }
+  if (uTarget < MIN_MOTOR_SPEED && uCurrent < MIN_MOTOR_SPEED)
+  { // floor to zero if both current and target are below MIN_MOTOR_SPEED
+    uResult = 0;
+  }
+  else if (uCurrent < uTarget)
+  { // Ramp up; only apply MIN_MOTOR_SPEED threshold if target speed is above MIN_MOTOR_SPEED
+    int next = min(uCurrent + RAMP_STEP, uTarget);
+    uResult = constrain(next, MIN_MOTOR_SPEED, MAX_SPEED);
+  }
+  else if (uCurrent > uTarget)
+  { // Ramp down or stay at target
+    int next = max(uCurrent - RAMP_STEP, uTarget);
+    uResult = (uTarget < MIN_MOTOR_SPEED && next <= MIN_MOTOR_SPEED) ? 0 : constrain(next, MIN_MOTOR_SPEED, MAX_SPEED);
   }
 
   return (target < 0) ? -uResult : uResult; // negative if target < 0, else positive or zero
 }
-
