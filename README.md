@@ -76,6 +76,18 @@ Receiver: 10nF ceramic between DATA and GND
 
     DATA  --  [10nF ceramic]    ---- GND
 
+## Unit Testing
+
+Unit tests are set up using **PlatformIO** and the **Unity** test framework.
+
+To run the tests, run in terminal (project context):
+
+```sh
+pio test -e native
+```
+
+This will execute all tests in the `test/` directory using the `native` environment.  
+Refer to the [PlatformIO documentation](https://docs.platformio.org/en/latest/core/userguide/cmd_test.html) for more info.
 
 ## Bugs
 
