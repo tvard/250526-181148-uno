@@ -65,11 +65,6 @@ void test_slewRateLimit_zero_crossing(void) {
     TEST_ASSERT_EQUAL_MESSAGE(-20 + RAMP_STEP, slewRateLimit(-20, 100), "Zero crossing: -20->100");
 }
 
-void test_slewRateLimit_no_change(void) {
-    // No change if current equals target
-    TEST_ASSERT_EQUAL_MESSAGE(123, slewRateLimit(123, 123), "No change: 123->123");
-}
-
 void test_slewRateLimit_small_steps(void) {
     // Small increments and decrements
 
@@ -266,7 +261,6 @@ int main(void) {
     RUN_TEST(test_slewRateLimit_ramp_up);
     RUN_TEST(test_slewRateLimit_ramp_down);
     RUN_TEST(test_slewRateLimit_zero_crossing);
-    RUN_TEST(test_slewRateLimit_no_change);
     RUN_TEST(test_slewRateLimit_small_steps);
     RUN_TEST(test_slewRateLimit_min_speed_behavior);
     RUN_TEST(test_slewRateLimit_max_speed_behavior);

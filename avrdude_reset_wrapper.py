@@ -1,8 +1,15 @@
 #!/usr/bin/env python3
 """
+Author: TV, June 2025
 Arduino firmware uploader with automatic reset functionality.
-Optimized for PlatformIO integration.
+To be used within PlatformIO as custom upload script (`upload_command = python avrdude_reset_wrapper.py $UPLOAD_PORT $UPLOAD_SPEED $SOURCE`)
+
+Purpose: Upload firmware to Arduino boards using avrdude with RTS reset (e.g. on 6-Pin, FTDI FT232RL cables [USB to TTL RS232 Serial Adapters])
+This script automatically resets the board before upload by toggling the RTS signal. This allows avrdude to connect to the bootloader without manual intervention.
+
+Can be adapted to other pins like DTR or DSR if needed instead.
 """
+
 
 import os
 import shutil
@@ -72,7 +79,7 @@ class ArduinoUploader:
                 ser.rts = True   # Assert reset
                 time.sleep(0.3)  # Hold reset
                 ser.rts = False  # Release reset
-            
+                
             time.sleep(0.5)  # Wait for bootloader
             print("Reset completed, bootloader ready")
             return True
