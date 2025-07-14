@@ -78,7 +78,7 @@ struct ManualModeOutputs {
 };
 
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton = false);
-MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLeft, int prevRight);
+MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight);
 long map(float steppedRatioLR);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);

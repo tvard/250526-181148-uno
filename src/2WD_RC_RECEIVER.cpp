@@ -13,18 +13,16 @@
 // Pin Definitions
 const int RIGHT_MOTOR_IN1 = 2;
 const int RIGHT_MOTOR_IN2 = 3;
-const int RIGHT_MOTOR_EN  = 5;
-const int LEFT_MOTOR_IN1  = 4;
-const int LEFT_MOTOR_IN2  = 7;
-const int LEFT_MOTOR_EN   = 6;
+const int RIGHT_MOTOR_EN = 5;
+const int LEFT_MOTOR_IN1 = 4;
+const int LEFT_MOTOR_IN2 = 7;
+const int LEFT_MOTOR_EN = 6;
 
-const int CS_PIN           = 7;
-const int BUZZER_PIN       = 10;
-const int MODE_BUTTON_PIN  = 6;
-const int ULTRASONIC_TRIG  = 12;
-const int ULTRASONIC_ECHO  = 13;
-
-
+const int CS_PIN = 7;
+const int BUZZER_PIN = 10;
+const int MODE_BUTTON_PIN = 6;
+const int ULTRASONIC_TRIG = 12;
+const int ULTRASONIC_ECHO = 13;
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // default: 2000 bps - must match transmitter speed
@@ -256,52 +254,56 @@ void loop()
 //   }
 // }
 
-void manualMode() {
-    static int leftSpeed = 0, rightSpeed = 0, prevLeftSpeed = 0, prevRightSpeed = 0;
-    static int rfLostCounter = 0;
-    static bool brakingApplied = false;
+void manualMode()
+{
+  static int leftSpeed = 0, rightSpeed = 0, prevLeftSpeed = 0, prevRightSpeed = 0;
+  static int rfLostCounter = 0;
+  static bool brakingApplied = false;
 
-    bool isRead = readRFSignals();
+  bool isRead = readRFSignals();
 
-    JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
+  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
 
-    if (isRead) {
-        ManualModeInputs in = {
-            js, leftSpeed, rightSpeed, prevLeftSpeed, prevRightSpeed
-        };
+  if (isRead)
+  {
+    ManualModeInputs in = {
+        js, leftSpeed, rightSpeed, prevLeftSpeed, prevRightSpeed};
 
-        ManualModeOutputs out = manualModeStep(in);
+    ManualModeOutputs out = manualModeStep(in);
 
-        leftSpeed = out.leftSpeed;
-        rightSpeed = out.rightSpeed;
-        brakingApplied = out.brakingApplied;
+    leftSpeed = out.leftSpeed;
+    rightSpeed = out.rightSpeed;
+    brakingApplied = out.brakingApplied;
 
-        setMotorSpeeds(out.outputLeft, out.outputRight);
+    setMotorSpeeds(out.outputLeft, out.outputRight);
 
-        prevLeftSpeed = leftSpeed;
-        prevRightSpeed = rightSpeed;
+    prevLeftSpeed = leftSpeed;
+    prevRightSpeed = rightSpeed;
 
-        // Buzzer 
-        if (joystickButton && !buzzerEnabled) {
-            digitalWrite(BUZZER_PIN, HIGH);
-            buzzerEnabled = true;
-        } else if (!joystickButton && buzzerEnabled) {
-            digitalWrite(BUZZER_PIN, LOW);
-            buzzerEnabled = false;
-        }
-
-        manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
-    } else if (rfLostCounter++ * LOOP_DELAY_MS > 440) // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
+    // Buzzer
+    if (joystickButton && !buzzerEnabled)
     {
-        leftSpeed = 0;
-        rightSpeed = 0;
-
-        setMotorSpeeds(leftSpeed, rightSpeed);
-        rfLostCounter = 0;
-        Serial.println("RF SIGNAL LOSS: STOPPING...");
+      digitalWrite(BUZZER_PIN, HIGH);
+      buzzerEnabled = true;
+    }
+    else if (!joystickButton && buzzerEnabled)
+    {
+      digitalWrite(BUZZER_PIN, LOW);
+      buzzerEnabled = false;
     }
 
+    manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
     Serial.println();
+  }
+  else if (rfLostCounter++ * LOOP_DELAY_MS > 440) // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
+  {
+    leftSpeed = 0;
+    rightSpeed = 0;
+
+    setMotorSpeeds(leftSpeed, rightSpeed);
+    rfLostCounter = 0;
+    Serial.println("RF SIGNAL LOSS: STOPPING...");
+  }
 }
 
 void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResult &js, ManualModeOutputs &out, bool brakingApplied)
@@ -668,4 +670,3 @@ void beep(int duration)
 //     delay(beepDuration);
 //   }
 // }
-
