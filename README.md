@@ -86,6 +86,8 @@ To run the tests, run in terminal (project context):
 pio test -e native
 ```
 
+Add `-v (or -vv, -vvv)` flags to change verbosity. For `printf` logs to be visible, minimum `-v` is required.
+
 This will execute all tests in the `test/` directory using the `native` environment.  
 Refer to the [PlatformIO documentation](https://docs.platformio.org/en/latest/core/userguide/cmd_test.html) for more info.
 
@@ -93,12 +95,25 @@ Refer to the [PlatformIO documentation](https://docs.platformio.org/en/latest/co
 
 Big'uns:
 
-- MAJOR: Microcontroller turns off after active brake from full speed
-- MAJOR: Antenna issues. Trying different sizes and shapes - straight vs hellical. Boost Tx to ~10-12V, Maybe ground Rx?
+- MAJOR: Microcontroller turns off on left turn (previously on active braking from full speed). Voltage sag or noise.
+  => add caps:
+
+  | Location               | Type                   | Value(s)             | Comments
+  | ---------------------- | ---------------------- | -------------------- | --------------------
+  | L293D Vcc2 (pin 8)     | Electrolytic + ceramic | 470–1000 µF + 100 nF | VCC2 = motor +12V supply 
+  | L293D Vcc1 (pin 16)    | Ceramic                | 100 nF               | VCC1 = +5V  supply (100nF to 1uF)
+  | 5V Buck Output         | Electrolytic + ceramic | 1000 µF + 100 nF     | Larger cap to account for voltage sag due to current draw.
+  | Radio / Receiver       | Electrolytic + ceramic | 100–220 µF + 100 nF  | Done 
+  | Arduino Vcc (optional) | Ceramic                | 100 nF               | VCC pin (unregulated, RAW with 6-12V regulated without cap, less efficient)
+
+  => increase 5V out to 5.05V - 5.1V on buck converter
+
 - MAJOR: Joystick stick drift due to bad breadboard - perfboard eveything (+ joystick?)
 
 Minor:
+- Antenna issues. Trying different sizes and shapes - straight vs hellical. Boost Tx to ~10-12V.
 - Loose shakey wires. finalize then perboard or pcb
+  - 90% done for receiver
 
 ## Future Improvements
 

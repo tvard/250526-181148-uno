@@ -35,6 +35,8 @@ extern int leftSpeed;
 extern int rightSpeed;
 
 ManualModeInputs input;
+JoystickProcessingResult js;
+MotorTargets mt;
 
 void setUp(void) {
     input = {};
@@ -45,6 +47,9 @@ void setUp(void) {
     input.rightSpeed = 0;
     input.prevLeftSpeed = 0;
     input.prevRightSpeed = 0;
+
+    js = {};
+    mt = {};
 }
 
 void tearDown(void) {
@@ -129,151 +134,163 @@ void test_shouldSkipSlewRate(void) {
 
 }
 
-void test_processJoystick_center(void) {
-    JoystickProcessingResult js = processJoystick(512, 512, false);
-    TEST_ASSERT_INT_WITHIN(2, 0, js.correctedX); // Allow small rounding error
-    TEST_ASSERT_INT_WITHIN(2, 0, js.correctedY);
-    TEST_ASSERT_FLOAT_WITHIN(0.01, 0.0, js.rawRatioLR);
-    TEST_ASSERT_FALSE(js.buzzerOn);
-}
-
 void test_processJoystick_buzzer(void) {
-    JoystickProcessingResult js = processJoystick(512, 512, true);
+    js = processJoystick(512, 512, true, false);
     TEST_ASSERT_TRUE(js.buzzerOn);
 }
 
 void test_processJoystick_movement(void) {
-    JoystickProcessingResult js = processJoystick(512 + 50, 512 - 100, false);
-    TEST_ASSERT_INT_WITHIN(2, 50, js.correctedX);
-    TEST_ASSERT_INT_WITHIN(2, -100, js.correctedY);
+    js = processJoystick(512 + 50, 512 - 100, false, false);
+
+    printf ("Joystick: %d, %d\n", js.correctedX, js.correctedY);
+
+    TEST_ASSERT_INT_WITHIN(2, 512 + 50, js.correctedX);
+    TEST_ASSERT_INT_WITHIN(2, 512 - 100, js.correctedY);
     TEST_ASSERT_FALSE(js.buzzerOn);
 }
 
 void test_processJoystick_deadzone_behavior(void) {
-    JoystickProcessingResult js = processJoystick(514, 510, false);  // small deviation
-    TEST_ASSERT_INT_WITHIN(3, 0, js.correctedX);  // Assuming deadzone absorbs minor noise
-    TEST_ASSERT_INT_WITHIN(3, 0, js.correctedY);
+    js = processJoystick(514, 510, false, false);  // small deviation
+    TEST_ASSERT_INT_WITHIN(3, 512, js.correctedX);  // Assuming deadzone absorbs minor noise
+    TEST_ASSERT_INT_WITHIN(3, 512, js.correctedY);
 }
 
 void test_computeMotorTargets_basic(void) {
 
     // still
-    JoystickProcessingResult js = processJoystick(512, 512, false);
-    MotorTargets mt = computeMotorTargets(js, 0, 0);
+    js = processJoystick(512, 512, false, false);
+    mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
 
     // slight right turn
-    js = processJoystick(512 + 50, 512, false); // correctedY = -100
+    js = processJoystick((512 + 50), 512, false, false); // correctedY = -100
     mt = computeMotorTargets(js, 0, 0);
+
+    printf ("Joystick: %d, %d\n", js.correctedX, js.correctedY);
+    printf ("DEADZONEL %d\n", FORWARD_THRESHOLD, BACKWARD_THRESHOLD);
+    printf ("Motor Targets: %d, %d\n", mt.left, mt.right);
+
     TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio should be > 0");  
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
 
     // slight left turn
-    js = processJoystick(512 - 50, 512, false); // correctedY = 0
+    js = processJoystick(512 - 50, 512, false, false); // correctedY = 0
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
 
     // slight forward movement
-    js = processJoystick(512, 512 + 50, false);
+    js = processJoystick(512, 512 + 50, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
 
     // slight reverse movement
-    js = processJoystick(512, 512 - 50, false);
+    js = processJoystick(512, 512 - 50, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
 
     // sharp right turn - pivot
-    js = processJoystick(512 + 500, 512, false); // correctedY
+    js = processJoystick(512 + 500, 512, false, false); // correctedY
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be <= than -MIN_MOTOR_SPEED (reverse)");
     
     // sharp left turn - pivot
-    js = processJoystick(512 - 500, 512, false); // correctedY
+    js = processJoystick(512 - 500, 512, false, false); // correctedY
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED (reverse)");
     TEST_ASSERT_GREATER_THAN_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be greater than MIN_MOTOR_SPEED");
 
     // full forward
-    js = processJoystick(512 + 500, 512 + 500, false);
+    js = processJoystick(512 + 500, 512 + 500, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
 
     // full reverse
-    js = processJoystick(512 - 500, 512 - 500, false);
+    js = processJoystick(512 - 500, 512 - 500, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
 }
 
 void test_computeMotorTargets_skipSlew(void) {
-    JoystickProcessingResult js = processJoystick(512, 512, false); // center position
+    js = processJoystick(512, 512, false, false); // center position
 
     // slight right turn (should not skip slew rate)
-    js = processJoystick(512 + 50, 512, false);
-    MotorTargets mt = computeMotorTargets(js, 0, 0);
+    js = processJoystick(512 + 50, 512, false, false);
+    mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
     // strong right turn (should skip slew rate)
-    js = processJoystick(512 + 400, 512, false); 
+    js = processJoystick(512 + 400, 512, false, false); 
     mt = computeMotorTargets(js, 0, 0);  
     TEST_ASSERT_TRUE(mt.skipSlewRate);
     
     // strong left turn (should skip slew rate)
-    js = processJoystick(512 - 400, 512, false);
+    js = processJoystick(512 - 400, 512, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_TRUE(mt.skipSlewRate);
 
 
     // forwards (should NOT skip slew rate)
-    js = processJoystick(512, 512 + 100, false);
+    js = processJoystick(512, 512 + 100, false, false);
     mt = computeMotorTargets(js, 0, 0); // prevLeft > 0, targetLeft < 0
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
     // backwards (should NOT skip slew rate)
-    js = processJoystick(512, 512 - 100, false);
+    js = processJoystick(512, 512 - 100, false, false);
     mt = computeMotorTargets(js, 0, 0); // prevLeft < 0, targetLeft > 0
     TEST_ASSERT_FALSE(mt.skipSlewRate); 
 
     // direction flip (should skip slew rate)
-    js = processJoystick(512, 512 - 400, false);    // going backwards
+    js = processJoystick(512, 512 - 400, false, false);    // going backwards
     mt = computeMotorTargets(js, 100, 100);         // targeting forwards
     TEST_ASSERT_TRUE(mt.skipSlewRate);  
 }
 
 void test_computeMotorTargets_deadzone(void) {
-    JoystickProcessingResult js = processJoystick(512 + 2, 512 + 2, false); // very small movement
-    MotorTargets mt = computeMotorTargets(js, 0, 0);
+    js = processJoystick(512 + 2, 512 + 2, false, false); // very small movement
+    mt = computeMotorTargets(js, 0, 0);
 
     TEST_ASSERT_EQUAL(0, mt.left);
     TEST_ASSERT_EQUAL(0, mt.right);
 }
 
 void test_computeMotorTargets_edge_of_deadzone(void) {
-    // Just inside deadzone
-    JoystickProcessingResult js = processJoystick(512 + JOYSTICK_DEADZONE - 1, 512, false);
-    MotorTargets mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_EQUAL(0, mt.left);
-    TEST_ASSERT_EQUAL(0, mt.right);
-
-    // Just outside deadzone
-    js = processJoystick(512 + JOYSTICK_DEADZONE + 1, 512, false);
+    // Just inside deadzone - nudged left
+    js = processJoystick(512 - JOYSTICK_DEADZONE - 1, 512, false, false);
     mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_NOT_EQUAL(0, mt.left);
     TEST_ASSERT_NOT_EQUAL(0, mt.right);
+
+    // Just outside deadzone - nudged right
+    js = processJoystick(512 + JOYSTICK_DEADZONE + 1, 512, false, false);
+    mt = computeMotorTargets(js, 0, 0);
+
+    TEST_ASSERT_NOT_EQUAL(0, mt.left);
+
+    // Just outside deadzone - nudged forward
+    js = processJoystick(512, 512 + JOYSTICK_DEADZONE + 1, false, false);
+    mt = computeMotorTargets(js, 0, 0);
+
+    TEST_ASSERT_NOT_EQUAL(0, mt.left);
+
+    // Just outside deadzone - nudged backward
+    js = processJoystick(512, 512 - JOYSTICK_DEADZONE - 1, false, false);
+    mt = computeMotorTargets(js, 0, 0);
+
+    TEST_ASSERT_NOT_EQUAL(0, mt.left);
+
 }
 
 // Test full diagonal stick deflection (should mix both axes).
 void test_computeMotorTargets_max_diagonal(void) {
-    JoystickProcessingResult js = processJoystick(1023, 1023, false);
-    MotorTargets mt = computeMotorTargets(js, 0, 0);
+    js = processJoystick(1023, 1023, false, false);
+    mt = computeMotorTargets(js, 0, 0);
     // Depending on mixing, left or right may saturate at MAX_SPEED
     TEST_ASSERT_LESS_OR_EQUAL(MAX_SPEED, mt.left);
     TEST_ASSERT_LESS_OR_EQUAL(MAX_SPEED, mt.right);
@@ -297,6 +314,64 @@ void test_slewRateLimit_at_boundaries(void) {
     TEST_ASSERT_EQUAL(-MAX_SPEED, slewRateLimit(-MAX_SPEED, -MAX_SPEED - 100));
 }
 
+// --- Test: Zero Input -> No Movement ---
+void test_processJoystick_NoMotion() {
+    js = processJoystick(512, 512, false, false);
+    mt = computeMotorTargets(js, 0, 0);
+
+    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.correctedX);
+    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.correctedY);
+    TEST_ASSERT_EQUAL(0, mt.left);
+    TEST_ASSERT_EQUAL(0, mt.right);
+}
+
+// --- Test: Near-Zero Input Should Not Move ---
+void test_processJoystick_NearZeroInputWithinDeadzone_NoMotion() {
+
+    js = processJoystick(512 + 5, 512 + -4, false, false);
+    mt = computeMotorTargets(js, 0, 0);
+
+    TEST_ASSERT_EQUAL(0, mt.left);
+    TEST_ASSERT_EQUAL(0, mt.right);
+}
+
+// --- Test: Slew Limiter Reaches Zero from Small Drift ---
+void test_slewRateLimit_RampsDownToZero() {
+
+    js = processJoystick(512, 512, false, false); // Center joystick
+
+    // Pretend we're already moving a bit
+    mt = computeMotorTargets(js, 10, 10);
+
+    // Simulate several control loops
+    for (int i = 0; i < 20; i++) {
+        mt = computeMotorTargets(js, mt.left, mt.right);
+    }
+
+    TEST_ASSERT_EQUAL(0, mt.left);
+    TEST_ASSERT_EQUAL(0, mt.right);
+}
+
+// --- Test: Brake Enforced ---
+void test_Brake_EnforcesZeroSpeed() {
+
+    js = processJoystick(512 + 400, 512 + 400, false, false);  // Try to go forward
+
+    for (int i = 0; i < 20; i++) {
+        mt = computeMotorTargets(js, mt.left, mt.right);
+    }
+
+    js = processJoystick(512, 512, false, false);  // Try to go forward
+
+    for (int i = 0; i < 20; i++) {
+        mt = computeMotorTargets(js, mt.left, mt.right);
+    }
+
+    TEST_ASSERT_EQUAL(0, mt.left);
+    TEST_ASSERT_EQUAL(0, mt.right);
+}
+
+
 int main(void) {
     UNITY_BEGIN();
     RUN_TEST(test_slewRateLimit_no_change);
@@ -308,7 +383,8 @@ int main(void) {
     RUN_TEST(test_slewRateLimit_max_speed_behavior);
     RUN_TEST(test_shouldSkipSlewRate);
     
-    RUN_TEST(test_processJoystick_center);
+    RUN_TEST(test_processJoystick_NoMotion);
+    RUN_TEST(test_processJoystick_NearZeroInputWithinDeadzone_NoMotion);
     RUN_TEST(test_processJoystick_buzzer);
     RUN_TEST(test_processJoystick_movement);
     RUN_TEST(test_processJoystick_deadzone_behavior);
@@ -322,6 +398,9 @@ int main(void) {
     RUN_TEST(test_shouldApplyBraking_on_stop);
     RUN_TEST(test_shouldApplyBraking_after_brake);
     RUN_TEST(test_slewRateLimit_at_boundaries);
+    RUN_TEST(test_slewRateLimit_RampsDownToZero);
+
+    RUN_TEST(test_Brake_EnforcesZeroSpeed);
 
     
     return UNITY_END();

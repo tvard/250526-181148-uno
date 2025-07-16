@@ -12,12 +12,19 @@
 #include "pitches.h"
 
 // Pin Definitions
-const int RIGHT_MOTOR_IN1 = 2;
-const int RIGHT_MOTOR_IN2 = 3;
-const int RIGHT_MOTOR_EN = 5;
-const int LEFT_MOTOR_IN1 = 4;
-const int LEFT_MOTOR_IN2 = 7;
-const int LEFT_MOTOR_EN = 6;
+
+// LEFT MOTOR (L293D pins 2, 7, EN on 1)
+const int LEFT_MOTOR_IN1 = 2; 
+const int LEFT_MOTOR_IN2 = 3;
+
+const int LEFT_MOTOR_EN  = 5;  // Pin 1
+
+// RIGHT MOTOR (L293D pins 10, 15, EN on 9)
+const int RIGHT_MOTOR_IN1 = 6;  // Pin 10
+const int RIGHT_MOTOR_IN2 = 9;  // Pin 15
+const int RIGHT_MOTOR_EN  = 7;  // Pin 9
+
+
 
 const int BUZZER_PIN = 8;
 const int MODE_BUTTON_PIN = 6;
@@ -82,7 +89,7 @@ bool readRFSignals();
 
 String pad5(int val);
 String pad5f(float val);
-static int slewRateLimit(int current, int target);
+extern int slewRateLimit(int current, int target);
 
 struct EntertainerState {
     int noteIndex = 0;
@@ -166,6 +173,39 @@ static const int noteType[] = {
   return false; // should never hit
 }
 
+// void setup() {
+//   delay(1000);
+
+//   pinMode(LEFT_MOTOR_IN1, OUTPUT);
+//   pinMode(LEFT_MOTOR_IN2, OUTPUT);
+//   pinMode(LEFT_MOTOR_EN, OUTPUT);
+
+//   pinMode(RIGHT_MOTOR_IN1, OUTPUT);
+//   pinMode(RIGHT_MOTOR_IN2, OUTPUT);
+//   pinMode(RIGHT_MOTOR_EN, OUTPUT);
+
+//   // Test forward
+//   digitalWrite(LEFT_MOTOR_IN1, HIGH);
+//   digitalWrite(LEFT_MOTOR_IN2, LOW);
+//   analogWrite(LEFT_MOTOR_EN, 150);
+
+//   digitalWrite(RIGHT_MOTOR_IN1, HIGH);
+//   digitalWrite(RIGHT_MOTOR_IN2, LOW);
+//   analogWrite(RIGHT_MOTOR_EN, 150);
+
+//   delay(2000);
+
+//   // test backwards
+//   digitalWrite(LEFT_MOTOR_IN1, LOW);
+// digitalWrite(LEFT_MOTOR_IN2, HIGH);
+// analogWrite(LEFT_MOTOR_EN, 150);
+
+// digitalWrite(RIGHT_MOTOR_IN1, LOW);
+// digitalWrite(RIGHT_MOTOR_IN2, HIGH);
+// analogWrite(RIGHT_MOTOR_EN, 150);
+
+
+// }
 
 
 
@@ -357,7 +397,7 @@ void manualMode()
 
   bool isRead = readRFSignals();
 
-  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
+  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
 
   if (isRead)
   {
@@ -408,11 +448,11 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
   {
     Serial.print("STOP ");
   }
-  else if (leftSpeed < rightSpeed)
+  else if (leftSpeed > rightSpeed)
   {
     Serial.print("RIGHT");
   }
-  else if (rightSpeed < leftSpeed)
+  else if (rightSpeed > leftSpeed)
   {
     Serial.print("LEFT ");
   }
@@ -661,15 +701,15 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   if (leftSpeed >= 0)
   {
     // Backward (RWD)
-    digitalWrite(LEFT_MOTOR_IN1, LOW);
-    digitalWrite(LEFT_MOTOR_IN2, HIGH);
+    digitalWrite(LEFT_MOTOR_IN1, HIGH);
+    digitalWrite(LEFT_MOTOR_IN2, LOW);
     analogWrite(LEFT_MOTOR_EN, leftSpeed);
   }
   else
   {
     // Forward (RWD)
-    digitalWrite(LEFT_MOTOR_IN1, HIGH);
-    digitalWrite(LEFT_MOTOR_IN2, LOW);
+    digitalWrite(LEFT_MOTOR_IN1, LOW);
+    digitalWrite(LEFT_MOTOR_IN2, HIGH);
     analogWrite(LEFT_MOTOR_EN, -leftSpeed);
   }
 
@@ -677,15 +717,15 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   if (rightSpeed >= 0)
   {
     // Backward (RWD)
-    digitalWrite(RIGHT_MOTOR_IN1, LOW);
-    digitalWrite(RIGHT_MOTOR_IN2, HIGH);
+    digitalWrite(RIGHT_MOTOR_IN1, HIGH);
+    digitalWrite(RIGHT_MOTOR_IN2, LOW);
     analogWrite(RIGHT_MOTOR_EN, rightSpeed);
   }
   else
   {
     // Forward (RWD)
-    digitalWrite(RIGHT_MOTOR_IN1, HIGH);
-    digitalWrite(RIGHT_MOTOR_IN2, LOW);
+    digitalWrite(RIGHT_MOTOR_IN1, LOW);
+    digitalWrite(RIGHT_MOTOR_IN2, HIGH);
     analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
   }
 }

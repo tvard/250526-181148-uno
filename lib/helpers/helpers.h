@@ -8,8 +8,8 @@
 const int MAX_SPEED        = 255;
 const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
 
-const int LEFT_OFFSET      = +5;  // Offset for left motor speed
-const int RIGHT_OFFSET     = -5;  // Offset for right motor speed
+const int LEFT_OFFSET      = +10;  // Offset for left motor speed
+const int RIGHT_OFFSET     = -10;  // Offset for right motor speed
 
 const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
 const int TURN_TIME        = 800;     // Time to turn in milliseconds
@@ -81,7 +81,7 @@ struct ManualModeOutputs {
     // ...add more as needed
 };
 
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton = false);
+JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw);
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight);
 long map(float steppedRatioLR);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
