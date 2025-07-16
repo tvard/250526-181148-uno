@@ -9,6 +9,7 @@
 #include <SPI.h>     // SPI required by RadioHead
 #include "MPU6050.h" // MPU6050 IMU library
 #include "helpers.h"
+#include "pitches.h"
 
 // Pin Definitions
 const int RIGHT_MOTOR_IN1 = 2;
@@ -18,15 +19,14 @@ const int LEFT_MOTOR_IN1 = 4;
 const int LEFT_MOTOR_IN2 = 7;
 const int LEFT_MOTOR_EN = 6;
 
-const int CS_PIN = 7;
-const int BUZZER_PIN = 10;
+const int BUZZER_PIN = 8;
 const int MODE_BUTTON_PIN = 6;
 const int ULTRASONIC_TRIG = 12;
 const int ULTRASONIC_ECHO = 13;
 
 // Initialize the RH_ASK driver - FM 433 MHz
-// default: 2000 bps - must match transmitter speed
-// slower = better range, but less responsive
+// Default: 2000 bps - must match transmitter speed.  Slower = better range / integrity at range, but less responsive
+// Default Pins: RX on pin 11, TX on pin 12 (RH_ASK, change as needed in ctor)
 RH_ASK rf_driver(1200);
 
 // Structure for joystick data - MUST MATCH THE TRANSMITTER EXACTLY
@@ -84,6 +84,91 @@ String pad5(int val);
 String pad5f(float val);
 static int slewRateLimit(int current, int target);
 
+struct EntertainerState {
+    int noteIndex = 0;
+    unsigned long phaseStart = 0;
+    int phase = 0; // 0: play note, 1: wait for note to finish, 2: pause between notes
+    bool playing = false; // Whether the entertainer is currently playing
+};
+
+static EntertainerState entertainerState;
+
+bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt) {
+  // ——————————————————————————————————————————————————————————————
+  // 1) Melody data
+
+// Frequencies (Hz) for each pitch:
+//   G4 = 392, C5 = 523, E5 = 659, G5 = 784, C6 = 1047, E6 = 1319
+static const int melody[] = {
+  NOTE_G4, NOTE_E5, NOTE_C5, NOTE_E5,  // pickup + beat 1
+  NOTE_G5, NOTE_G5,                    // end of bar 1
+  NOTE_E5, NOTE_G5, NOTE_E5, NOTE_C5,  // bar 2 first four eighths
+  NOTE_E5, NOTE_G5                    // bar 2 next two eighths (~15 s mark)
+};
+
+// Duration type: 8 = eighth note, 4 = quarter note
+static const int noteType[] = {
+     8,     8,     8,     8,
+     4,     4,
+     8,     8,     8,     8,
+     8,     8
+};
+
+  const int totalNotes = sizeof(melody) / sizeof(melody[0]); // Total number of notes in the melody
+  const int tempo = 180;
+  const unsigned long baseNote = (60000UL / tempo) * 4;  // duration of a whole note
+
+  // Serial.print("Playing melody (TOTAL: " + (String)totalNotes + "): ");
+  // Serial.print(melody[state.noteIndex]);
+  // Serial.print(" (" + (String)state.noteIndex + ")" );
+  // Serial.println();
+
+  // ——————————————————————————————————————————————————————————————
+  // 2) Handle interruptions or end‐of‐melody
+  if (shouldInterrupt || state.noteIndex >= totalNotes) {
+    noTone(BUZZER_PIN);
+    state.noteIndex  = 0;
+    state.phase      = 0;   // reset to “play” phase
+    state.phaseStart = 0;
+    return false;
+  }
+
+  unsigned long now = millis();
+
+  // ——————————————————————————————————————————————————————————————
+  // 3) Compute this note’s on‑time and pause‑time
+  unsigned long noteOnTime   = baseNote / noteType[state.noteIndex];
+  unsigned long pauseTime    = noteOnTime / 4;  // 25% rest between notes
+
+  switch (state.phase) {
+    case 0: // start the note
+      tone(BUZZER_PIN, melody[state.noteIndex]);
+      state.phaseStart = now;
+      state.phase      = 1;
+      return true;
+
+    case 1: // waiting for note‐on to finish
+      if (now - state.phaseStart >= noteOnTime) {
+        noTone(BUZZER_PIN);
+        state.phaseStart = now;
+        state.phase      = 2;
+      }
+      return true;
+
+    case 2: // pause between notes
+      if (now - state.phaseStart >= pauseTime) {
+        state.noteIndex++;
+        state.phase = 0;
+      }
+      return true;
+  }
+
+  return false; // should never hit
+}
+
+
+
+
 void setup()
 {
   // Initialize serial communication for debugging
@@ -98,6 +183,8 @@ void setup()
   else
   {
     Serial.println("RF driver initialized.");
+    beep(100);
+    beep(100);
   }
 
   // Initialize motor control pins
@@ -147,6 +234,7 @@ void setup()
     }
   }
 
+
   if (deviceCount == 0)
   {
     Serial.println("No I2C devices found!");
@@ -189,17 +277,24 @@ void setup()
     Serial.println("MPU configured successfully");
     // Short beep to indicate successful initialization
     beep(100);
+    beep(100);
   }
   else
   {
     Serial.println("MPU connection failed!");
     Serial.println("Check wiring and power supply");
     // Error tone - long beep
-    beep(1000);
+    // beep(1000);
   }
 
   // Stop all motors initially
   stopMotors();
+
+  // beep buzzer to indicate setup completion
+  while (playEntertainerStep(entertainerState, false)) {
+    // no other tasks will run until the melody completes
+    delay(LOOP_DELAY_MS);
+  }
 
   Serial.println("Setup complete");
 }
@@ -281,16 +376,7 @@ void manualMode()
     prevRightSpeed = rightSpeed;
 
     // Buzzer
-    if (joystickButton && !buzzerEnabled)
-    {
-      digitalWrite(BUZZER_PIN, HIGH);
-      buzzerEnabled = true;
-    }
-    else if (!joystickButton && buzzerEnabled)
-    {
-      digitalWrite(BUZZER_PIN, LOW);
-      buzzerEnabled = false;
-    }
+    // entertainerState.playing = playEntertainerStep(entertainerState, buzzerEnabled);
 
     manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
     Serial.println();
@@ -335,32 +421,33 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
     Serial.print("MIXED"); // not ok good
   }
 
-  Serial.print(" Q LR: ");
+  Serial.print("    Q LR: ");
   Serial.print(pad5f(js.steppedRatioLR)); // stepped ratio
   Serial.print(" (");
   Serial.print(pad5f(js.rawRatioLR));
   Serial.print(")");
 
-  Serial.print(" Targ Spd: ");
+  Serial.print("    Targ Spd: ");
   Serial.print(pad5(out.outputLeft));
   Serial.print("");
   Serial.print(pad5(out.outputRight));
 
-  Serial.print(" Curr Spd: ");
+  Serial.print("    Curr Spd: ");
   Serial.print(pad5(leftSpeed));
   Serial.print(" | ");
   Serial.print(pad5(rightSpeed));
 
-  Serial.print(" Slew: ");
+  Serial.print("    Slew: ");
   Serial.print(!out.skipSlewRate ? "Y" : "N");
   Serial.print(" | ");
   Serial.print("Brk: ");
   Serial.print(brakingApplied ? "Y" : "N");
 
-  Serial.print(" XY: ");
+  Serial.print("    Corr. XY: ");
   Serial.print(pad5(js.correctedX));
   Serial.print(" | ");
   Serial.print(pad5(js.correctedY));
+
 }
 
 // Simple CRC calculation (XOR-based)
@@ -514,6 +601,11 @@ bool readRFSignals()
 /// The speed for the right motor. Positive values move the motor backward, negative values move it forward (RWD).
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
+  if (abs(leftSpeed) < JOYSTICK_DEADZONE && abs(rightSpeed) < JOYSTICK_DEADZONE) {
+      leftSpeed = 0;
+      rightSpeed = 0;
+  }
+
   // Constrain speeds to valid range
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
@@ -653,12 +745,12 @@ void stopMotors()
 //   stopMotors();
 // }
 
-void beep(int duration)
-{
-  digitalWrite(BUZZER_PIN, HIGH);
+void beep(int duration) {
+  tone(BUZZER_PIN, 2000); // 2kHz tone
   delay(duration);
-  digitalWrite(BUZZER_PIN, LOW);
+  noTone(BUZZER_PIN);
 }
+
 
 // void beepPattern(int beeps, int beepDuration)
 // {
