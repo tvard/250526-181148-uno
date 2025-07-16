@@ -18,6 +18,13 @@
  *
  *      Note: These tests are logic-only and do not require hardware.
  *      They are designed to run on the native platform, simulating the Arduino environment.
+ *      
+ *      gotchas:
+ *      Unity GT and LT (e.g. TEST_ASSERT_GREATER_THAN_MESSAGE) expects integers as arguments. For floats, use 
+ *      TEST_ASSERT_TRUE_MESSAGE instead, (val > 0.0f, "... > 0"); - its got more overloads
+ * 
+ *      for output printing, use printf... ( printf("x = %d\n", xVal); ) alongside `-v` flag for `pio` (any amount of `v's`)
+ *  
  */
 
 #include "../.pio/libdeps/native/Unity/src/unity.h"
@@ -27,8 +34,17 @@
 extern int leftSpeed;
 extern int rightSpeed;
 
+ManualModeInputs input;
 
 void setUp(void) {
+    input = {};
+    input.joystick.correctedX = 512;
+    input.joystick.correctedY = 512;
+    input.joystick.buzzerOn = false;
+    input.leftSpeed = 0;
+    input.rightSpeed = 0;
+    input.prevLeftSpeed = 0;
+    input.prevRightSpeed = 0;
 }
 
 void tearDown(void) {
@@ -61,8 +77,8 @@ void test_slewRateLimit_ramp_down(void) {
 
 void test_slewRateLimit_zero_crossing(void) {
     // Crossing zero from positive to negative and vice versa
-    TEST_ASSERT_EQUAL_MESSAGE(20 - RAMP_STEP, slewRateLimit(20, -100), "Zero crossing: 20->-100");
-    TEST_ASSERT_EQUAL_MESSAGE(-20 + RAMP_STEP, slewRateLimit(-20, 100), "Zero crossing: -20->100");
+    TEST_ASSERT_EQUAL_MESSAGE(20 - RAMP_STEP > -MIN_MOTOR_SPEED ? 0 : 20 - RAMP_STEP, slewRateLimit(20, -100), "Zero crossing: 20->-100");
+    TEST_ASSERT_EQUAL_MESSAGE(-20 + RAMP_STEP < MIN_MOTOR_SPEED ? 0 : -20 + RAMP_STEP, slewRateLimit(-20, 100), "Zero crossing: -20->100");
 }
 
 void test_slewRateLimit_small_steps(void) {
@@ -107,6 +123,10 @@ void test_shouldSkipSlewRate(void) {
     // No direction change
     TEST_ASSERT_FALSE(shouldSkipSlewRate(100, 100, 80, 80));
     TEST_ASSERT_FALSE(shouldSkipSlewRate(-100, -100, -80, -80));
+
+    TEST_ASSERT_TRUE(shouldSkipSlewRate(100, -100, -100, -100)); // Mixed L->R
+    TEST_ASSERT_TRUE(shouldSkipSlewRate(-100, 100, 100, 100));   // Mixed L->R
+
 }
 
 void test_processJoystick_center(void) {
@@ -122,19 +142,39 @@ void test_processJoystick_buzzer(void) {
     TEST_ASSERT_TRUE(js.buzzerOn);
 }
 
+void test_processJoystick_movement(void) {
+    JoystickProcessingResult js = processJoystick(512 + 50, 512 - 100, false);
+    TEST_ASSERT_INT_WITHIN(2, 50, js.correctedX);
+    TEST_ASSERT_INT_WITHIN(2, -100, js.correctedY);
+    TEST_ASSERT_FALSE(js.buzzerOn);
+}
+
+void test_processJoystick_deadzone_behavior(void) {
+    JoystickProcessingResult js = processJoystick(514, 510, false);  // small deviation
+    TEST_ASSERT_INT_WITHIN(3, 0, js.correctedX);  // Assuming deadzone absorbs minor noise
+    TEST_ASSERT_INT_WITHIN(3, 0, js.correctedY);
+}
+
 void test_computeMotorTargets_basic(void) {
 
-    // slight right turn
-    JoystickProcessingResult js = processJoystick(512 + 50, 512 - 100, false); // correctedY = -100
+    // still
+    JoystickProcessingResult js = processJoystick(512, 512, false);
     MotorTargets mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be MIN_MOTOR_SPEED");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
+
+    // slight right turn
+    js = processJoystick(512 + 50, 512, false); // correctedY = -100
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio should be > 0");  
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
 
     // slight left turn
     js = processJoystick(512 - 50, 512, false); // correctedY = 0
     mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
-    TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be MIN_MOTOR_SPEED");
 
     // slight forward movement
     js = processJoystick(512, 512 + 50, false);
@@ -177,27 +217,29 @@ void test_computeMotorTargets_skipSlew(void) {
     JoystickProcessingResult js = processJoystick(512, 512, false); // center position
 
     // slight right turn (should not skip slew rate)
-    MotorTargets mt = computeMotorTargets(js, 100, -100);
+    js = processJoystick(512 + 50, 512, false);
+    MotorTargets mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
     // strong right turn (should skip slew rate)
     js = processJoystick(512 + 400, 512, false); 
-    mt = computeMotorTargets(js, 0, 0);
+    mt = computeMotorTargets(js, 0, 0);  
     TEST_ASSERT_TRUE(mt.skipSlewRate);
-
+    
     // strong left turn (should skip slew rate)
     js = processJoystick(512 - 400, 512, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_TRUE(mt.skipSlewRate);
 
+
     // forwards (should NOT skip slew rate)
-    js = processJoystick(512, 512, false);
-    mt = computeMotorTargets(js, 100, 100); // prevLeft > 0, targetLeft < 0
+    js = processJoystick(512, 512 + 100, false);
+    mt = computeMotorTargets(js, 0, 0); // prevLeft > 0, targetLeft < 0
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
     // backwards (should NOT skip slew rate)
-    js = processJoystick(512, 512, false);
-    mt = computeMotorTargets(js, -100, -100); // prevLeft < 0, targetLeft > 0
+    js = processJoystick(512, 512 - 100, false);
+    mt = computeMotorTargets(js, 0, 0); // prevLeft < 0, targetLeft > 0
     TEST_ASSERT_FALSE(mt.skipSlewRate); 
 
     // direction flip (should skip slew rate)
@@ -265,8 +307,12 @@ int main(void) {
     RUN_TEST(test_slewRateLimit_min_speed_behavior);
     RUN_TEST(test_slewRateLimit_max_speed_behavior);
     RUN_TEST(test_shouldSkipSlewRate);
+    
     RUN_TEST(test_processJoystick_center);
     RUN_TEST(test_processJoystick_buzzer);
+    RUN_TEST(test_processJoystick_movement);
+    RUN_TEST(test_processJoystick_deadzone_behavior);
+
     RUN_TEST(test_computeMotorTargets_basic);
     RUN_TEST(test_computeMotorTargets_skipSlew);
     RUN_TEST(test_computeMotorTargets_deadzone);

@@ -29,5 +29,20 @@ std::string pad5f(float val) {
   snprintf(buf, sizeof(buf), "%5.2f", val);
   return std::string(buf);
 }
+
+
+// class SerialSim {
+// public:
+//     static void print(const char* str) {}
+//     static void print(int val) {}
+//     static void println(const char* str) {}
+//     static void println(int val) {}
+
+//     SerialSim() {}
+// };
+
+// init class as 'Serial'
+// SerialSim Serial;
+
 #endif
 
