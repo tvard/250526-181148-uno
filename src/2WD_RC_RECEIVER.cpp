@@ -27,9 +27,9 @@ const int RIGHT_MOTOR_EN  = 7;  // Pin 9
 
 
 const int BUZZER_PIN = 8;
-const int MODE_BUTTON_PIN = 6;
-const int ULTRASONIC_TRIG = 12;
-const int ULTRASONIC_ECHO = 13;
+// const int MODE_BUTTON_PIN = 6;
+// const int ULTRASONIC_TRIG = 12;
+// const int ULTRASONIC_ECHO = 13;
 
 // Initialize the RH_ASK driver - FM 433 MHz
 // Default: 2000 bps - must match transmitter speed.  Slower = better range / integrity at range, but less responsive
@@ -235,12 +235,12 @@ void setup()
   pinMode(RIGHT_MOTOR_IN2, OUTPUT);
   pinMode(RIGHT_MOTOR_EN, OUTPUT);
 
-  // Initialize ultrasonic sensor pins
-  pinMode(ULTRASONIC_TRIG, OUTPUT);
-  pinMode(ULTRASONIC_ECHO, INPUT);
+  // // Initialize ultrasonic sensor pins
+  // pinMode(ULTRASONIC_TRIG, OUTPUT);
+  // pinMode(ULTRASONIC_ECHO, INPUT);
 
-  // Initialize mode toggle button with internal pullup
-  pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
+  // // Initialize mode toggle button with internal pullup
+  // pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
 
   // Initialize buzzer
   pinMode(BUZZER_PIN, OUTPUT);
