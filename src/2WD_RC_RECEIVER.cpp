@@ -11,20 +11,15 @@
 #include "helpers.h"
 #include "pitches.h"
 
-// Pin Definitions
+// Pin Definitions (pro16MHzatmega328 pinout: https://protosupplies.com/wp-content/uploads/2020/10/Pro-Mini-Board-Pinout.jpg) 
 
-// LEFT MOTOR (L293D pins 2, 7, EN on 1)
-const int LEFT_MOTOR_IN1 = 2; 
-const int LEFT_MOTOR_IN2 = 3;
+const int LEFT_MOTOR_IN1 = 7;  
+const int LEFT_MOTOR_IN2 = 9;  
+const int LEFT_MOTOR_EN  = 6;  
 
-const int LEFT_MOTOR_EN  = 5;  // Pin 1
-
-// RIGHT MOTOR (L293D pins 10, 15, EN on 9)
-const int RIGHT_MOTOR_IN1 = 6;  // Pin 10
-const int RIGHT_MOTOR_IN2 = 9;  // Pin 15
-const int RIGHT_MOTOR_EN  = 7;  // Pin 9
-
-
+const int RIGHT_MOTOR_IN1 = 2; 
+const int RIGHT_MOTOR_IN2 = 3;
+const int RIGHT_MOTOR_EN  = 5;  
 
 const int BUZZER_PIN = 8;
 // const int MODE_BUTTON_PIN = 6;
@@ -59,7 +54,6 @@ bool autoMode = false;            // Start in manual mode
 unsigned long lastModeChange = 0; // Debounce button
 unsigned long lastDistanceCheck = 0;
 int lastButtonState = HIGH; // Previous state of button
-bool buzzerEnabled = false;
 
 // RF Signal variables (these will be updated directly from received JoystickData)
 int joystickX = 512; // Center position (range: 0-1023)
@@ -122,7 +116,7 @@ static const int noteType[] = {
 };
 
   const int totalNotes = sizeof(melody) / sizeof(melody[0]); // Total number of notes in the melody
-  const int tempo = 180;
+  const int tempo = 340;
   const unsigned long baseNote = (60000UL / tempo) * 4;  // duration of a whole note
 
   // Serial.print("Playing melody (TOTAL: " + (String)totalNotes + "): ");
@@ -197,14 +191,17 @@ static const int noteType[] = {
 
 //   // test backwards
 //   digitalWrite(LEFT_MOTOR_IN1, LOW);
-// digitalWrite(LEFT_MOTOR_IN2, HIGH);
-// analogWrite(LEFT_MOTOR_EN, 150);
+//   digitalWrite(LEFT_MOTOR_IN2, HIGH);
+//   analogWrite(LEFT_MOTOR_EN, 150);
 
-// digitalWrite(RIGHT_MOTOR_IN1, LOW);
-// digitalWrite(RIGHT_MOTOR_IN2, HIGH);
-// analogWrite(RIGHT_MOTOR_EN, 150);
+//   digitalWrite(RIGHT_MOTOR_IN1, LOW);
+//   digitalWrite(RIGHT_MOTOR_IN2, HIGH);
+//   analogWrite(RIGHT_MOTOR_EN, 150);
 
+//   delay(2000);
 
+//   // test stop
+//   stopMotors();
 // }
 
 
@@ -235,6 +232,12 @@ void setup()
   pinMode(RIGHT_MOTOR_IN2, OUTPUT);
   pinMode(RIGHT_MOTOR_EN, OUTPUT);
 
+  // Stop all motors initially
+  stopMotors();
+
+  // Initialize buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
+
   // // Initialize ultrasonic sensor pins
   // pinMode(ULTRASONIC_TRIG, OUTPUT);
   // pinMode(ULTRASONIC_ECHO, INPUT);
@@ -242,8 +245,7 @@ void setup()
   // // Initialize mode toggle button with internal pullup
   // pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
 
-  // Initialize buzzer
-  pinMode(BUZZER_PIN, OUTPUT);
+
 
   // Initialize IMU - Using MPU6050 library (works with MPU6500/9250)
   Wire.begin();
@@ -327,8 +329,7 @@ void setup()
     // beep(1000);
   }
 
-  // Stop all motors initially
-  stopMotors();
+
 
   // beep buzzer to indicate setup completion
   while (playEntertainerStep(entertainerState, false)) {
@@ -416,9 +417,10 @@ void manualMode()
     prevRightSpeed = rightSpeed;
 
     // Buzzer
-    // entertainerState.playing = playEntertainerStep(entertainerState, buzzerEnabled);
+    entertainerState.playing = playEntertainerStep(entertainerState,  !joystickButton);
 
     manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
+    rfLostCounter = 0;
     Serial.println();
   }
   else if (rfLostCounter++ * LOOP_DELAY_MS > 440) // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
@@ -488,6 +490,12 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
   Serial.print(" | ");
   Serial.print(pad5(js.correctedY));
 
+  Serial.print("    Braking: ");
+  Serial.print(brakingApplied ? "Y" : "N");
+
+  // buzzer 
+  Serial.print("    Horn: ");
+  Serial.print(entertainerState.playing ? "Y" : "N");
 }
 
 // Simple CRC calculation (XOR-based)
@@ -697,20 +705,36 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
     rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
   }
 
+  // Serial.println();
+
   // Set left motor direction and speed (RWD: positive = backward, negative = forward)
   if (leftSpeed >= 0)
   {
     // Backward (RWD)
     digitalWrite(LEFT_MOTOR_IN1, HIGH);
     digitalWrite(LEFT_MOTOR_IN2, LOW);
-    analogWrite(LEFT_MOTOR_EN, leftSpeed);
+    analogWrite(LEFT_MOTOR_EN,  abs(leftSpeed));
+
+    // // log
+    // Serial.print("L: ");
+    // Serial.print(leftSpeed); Serial.print("\t");
+    // Serial.print("L-IN1: " + String(HIGH)); Serial.print("\t");
+    // Serial.print("L-IN2: " + String(LOW)); Serial.print("\t");
+    // Serial.println("L-EN: " +  String(abs(leftSpeed)));
   }
   else
   {
     // Forward (RWD)
     digitalWrite(LEFT_MOTOR_IN1, LOW);
     digitalWrite(LEFT_MOTOR_IN2, HIGH);
-    analogWrite(LEFT_MOTOR_EN, -leftSpeed);
+    analogWrite(LEFT_MOTOR_EN, abs(leftSpeed));
+
+    // // log
+    // Serial.print("L: ");
+    // Serial.print(leftSpeed); Serial.print("\t");
+    // Serial.print("L-IN1: " + String(LOW)); Serial.print("\t");
+    // Serial.print("L-IN2: " + String(HIGH)); Serial.print("\t");
+    // Serial.println("L-EN: " + String(abs(leftSpeed)));
   }
 
   // Set right motor direction and speed (RWD: positive = backward, negative = forward)
@@ -719,14 +743,28 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
     // Backward (RWD)
     digitalWrite(RIGHT_MOTOR_IN1, HIGH);
     digitalWrite(RIGHT_MOTOR_IN2, LOW);
-    analogWrite(RIGHT_MOTOR_EN, rightSpeed);
+    analogWrite(RIGHT_MOTOR_EN, abs(rightSpeed));
+
+    // // log
+    // Serial.print("R: ");
+    // Serial.print(rightSpeed); Serial.print("\t");
+    // Serial.print("R-IN1: " + String(HIGH)); Serial.print("\t");
+    // Serial.print("R-IN2: " + String(LOW)); Serial.print("\t");
+    // Serial.println("R-EN: " + String(abs(rightSpeed)));
   }
   else
   {
     // Forward (RWD)
     digitalWrite(RIGHT_MOTOR_IN1, LOW);
     digitalWrite(RIGHT_MOTOR_IN2, HIGH);
-    analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
+    analogWrite(RIGHT_MOTOR_EN, abs(rightSpeed));
+
+    // // log
+    // Serial.print("R: ");
+    // Serial.print(rightSpeed); Serial.print("\t");
+    // Serial.print("R-IN1: " + String(LOW)); Serial.print("\t");
+    // Serial.print("R-IN2: " + String(HIGH)); Serial.print("\t");
+    // Serial.println("R-EN: " + String(abs(rightSpeed)));
   }
 }
 
