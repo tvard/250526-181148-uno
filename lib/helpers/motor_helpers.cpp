@@ -107,7 +107,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
     if (isInDeadzone(js.correctedY) && !isInDeadzone(js.correctedX)) {
         int sp = map((int)(fabs(js.steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 10); // capped speed
 
-        printf ("In-place turn, speed: %d | LR Ratio: %f \n", sp, js.steppedRatioLR);
+        // char buf[64];
+        // snprintf(buf, sizeof(buf), "In-place turn, speed: %d | LR Ratio: %0.2f \n", sp, js.steppedRatioLR);
+        // Serial.println(buf);
 
         mt.skipSlewRate = false;
 
@@ -140,20 +142,15 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
         sp = map(js.correctedY, 512, 1023, MIN_MOTOR_SPEED, MAX_SPEED);
         mt.left = sp;
         mt.right = sp;
-        mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
-        return mt;
     } else if (js.correctedY < BACKWARD_THRESHOLD) {
         sp = map(js.correctedY, 0, 512, -MAX_SPEED, -MIN_MOTOR_SPEED);
         mt.left = sp;
         mt.right = sp;
-        mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
-        return mt;
     }
 
-    // // Default: simple tank mixing + gentle turn
-    // mt.left = constrain(js.correctedY + js.correctedX, -MAX_SPEED, MAX_SPEED);
-    // mt.right = constrain(js.correctedY - js.correctedX, -MAX_SPEED, MAX_SPEED);
-
+    // Default: simple tank mixing + gentle turn
+    mt.left = constrain(js.correctedY + js.correctedX, -MAX_SPEED, MAX_SPEED);
+    mt.right = constrain(js.correctedY - js.correctedX, -MAX_SPEED, MAX_SPEED);
 
     mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
 
