@@ -9,9 +9,9 @@
 #include <algorithm>    // for std::min, std::max
 #include <cmath>        //for round()
 
-template<typename T>
-T constrain(T val, T min_val, T max_val) {
-    return std::min(std::max(val, min_val), max_val);
+template<typename T, typename U, typename V>
+T constrain(T val, const U& min_val, const V& max_val) {
+    return std::min(std::max(val, static_cast<T>(min_val)), static_cast<T>(max_val));
 }
 long map(long x, long in_min, long in_max, long out_min, long out_max)
 {
@@ -148,9 +148,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
         mt.right = sp;
     }
 
-    // Default: simple tank mixing + gentle turn
-    mt.left = constrain(js.correctedY + js.correctedX, -MAX_SPEED, MAX_SPEED);
-    mt.right = constrain(js.correctedY - js.correctedX, -MAX_SPEED, MAX_SPEED);
+    // Trim left and right speeds according to LR ratio
+    if (js.steppedRatioLR != 0) {
+
+        int diff = abs(sp * js.steppedRatioLR);
+        
+        if (js.steppedRatioLR < 0) { 
+            mt.left = sp - diff;
+            mt.right = sp;
+        } else if (js.steppedRatioLR > 0) {
+            mt.left = sp;
+            mt.right = sp - diff;
+        }
+    }
 
     mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
 
