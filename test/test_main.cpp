@@ -206,16 +206,46 @@ void test_computeMotorTargets_basic(void) {
     TEST_ASSERT_GREATER_THAN_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be greater than MIN_MOTOR_SPEED");
 
     // full forward
-    js = processJoystick(512 + 500, 512 + 500, false, false);
+    js = processJoystick(512, 512 + 500, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
 
     // full reverse
-    js = processJoystick(512 - 500, 512 - 500, false, false);
+    js = processJoystick(512, 512 - 500, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
+}
+
+void test_computeMotorTargets_Mixing(void) {
+    js = processJoystick(512 + 50, 512 + 500, false, false); // forward and slight right => L motor should be faster
+    mt = computeMotorTargets(js, 0, 0);
+
+    // printf("\nRatio: %f\n", js.steppedRatioLR);
+    // printf("\nRatio: %f\n", js.rawRatioLR);
+
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.right, mt.left, "Left motor target should be >= than Right motor target on on right turn.");
+
+    js = processJoystick(512 - 50, 512 + 500, false, false); // forward and slight left => R motor should be faster
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left motor target should be <= than Right motor target on on left turn.");
+
+    js = processJoystick(512 + 50, 512 - 500, false, false); // reverse and slight right => L motor should be faster (in reverse, -ve speed)
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
+    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.right, mt.left, "Left motor target should be >= than Right motor target on on right turn.");
+
+    js = processJoystick(512 - 50, 512 - 500, false, false); // reverse and slight left => R motor should be faster (in reverse, -ve speed)
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
+    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left motor target should be <= than Right motor target on on left turn.");
 }
 
 void test_computeMotorTargets_skipSlew(void) {
@@ -390,6 +420,7 @@ int main(void) {
     RUN_TEST(test_processJoystick_deadzone_behavior);
 
     RUN_TEST(test_computeMotorTargets_basic);
+    RUN_TEST(test_computeMotorTargets_Mixing);
     RUN_TEST(test_computeMotorTargets_skipSlew);
     RUN_TEST(test_computeMotorTargets_deadzone);
     RUN_TEST(test_computeMotorTargets_edge_of_deadzone);
