@@ -397,11 +397,13 @@ void manualMode()
   static bool brakingApplied = false;
 
   bool isRead = readRFSignals();
-
+  
   JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
+  entertainerState.playing = playEntertainerStep(entertainerState,  !joystickButton); // Buzzer - if no signal, continue playing / not playing
 
   if (isRead)
   {
+
     ManualModeInputs in = {
         js, leftSpeed, rightSpeed, prevLeftSpeed, prevRightSpeed};
 
@@ -416,9 +418,6 @@ void manualMode()
     prevLeftSpeed = leftSpeed;
     prevRightSpeed = rightSpeed;
 
-    // Buzzer
-    entertainerState.playing = playEntertainerStep(entertainerState,  !joystickButton);
-
     manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
     rfLostCounter = 0;
     Serial.println();
@@ -432,6 +431,7 @@ void manualMode()
     rfLostCounter = 0;
     Serial.println("RF SIGNAL LOSS: STOPPING...");
   }
+
 }
 
 void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResult &js, ManualModeOutputs &out, bool brakingApplied)
