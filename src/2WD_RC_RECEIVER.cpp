@@ -22,6 +22,7 @@ const int RIGHT_MOTOR_IN2 = 3;
 const int RIGHT_MOTOR_EN  = 5;  
 
 const int BUZZER_PIN = 8;
+const int VOLTAGE_PIN = A0;
 // const int MODE_BUTTON_PIN = 6;
 // const int ULTRASONIC_TRIG = 12;
 // const int ULTRASONIC_ECHO = 13;
@@ -78,6 +79,7 @@ void stopMotors();
 // void turnLeft(int angle);
 // void turnRight(int angle);
 void beep(int duration);
+void getVoltage();
 // void beepPattern(int beeps, int beepDuration);
 bool readRFSignals();
 
@@ -232,6 +234,12 @@ void setup()
   pinMode(RIGHT_MOTOR_IN2, OUTPUT);
   pinMode(RIGHT_MOTOR_EN, OUTPUT);
 
+  // initialize analog pins
+  pinMode(VOLTAGE_PIN, INPUT);
+  digitalWrite(VOLTAGE_PIN, LOW);
+  pinMode(A1, INPUT);
+  digitalWrite(A1, LOW);
+
   // Stop all motors initially
   stopMotors();
 
@@ -247,87 +255,87 @@ void setup()
 
 
 
-  // Initialize IMU - Using MPU6050 library (works with MPU6500/9250)
-  Wire.begin();
-  Wire.setClock(100000); // Start with slower I2C speed (100kHz)
+  // // Initialize IMU - Using MPU6050 library (works with MPU6500/9250)
+  // Wire.begin();
+  // Wire.setClock(100000); // Start with slower I2C speed (100kHz)
 
-  delay(500); // Longer delay for MPU to stabilize
+  // delay(500); // Longer delay for MPU to stabilize
 
-  Serial.println("Starting I2C bus...");
+  // Serial.println("Starting I2C bus...");
 
-  // Scan for I2C devices first
-  Serial.println("Scanning for I2C devices...");
-  byte error, address;
-  int deviceCount = 0;
+  // // Scan for I2C devices first
+  // Serial.println("Scanning for I2C devices...");
+  // byte error, address;
+  // int deviceCount = 0;
 
-  for (address = 1; address < 127; address++)
-  {
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
+  // for (address = 1; address < 127; address++)
+  // {
+  //   Wire.beginTransmission(address);
+  //   error = Wire.endTransmission();
 
-    if (error == 0)
-    {
-      Serial.print("I2C device found at address 0x");
-      if (address < 16)
-        Serial.print("0");
-      Serial.print(address, HEX);
-      Serial.println();
-      deviceCount++;
-    }
-  }
+  //   if (error == 0)
+  //   {
+  //     Serial.print("I2C device found at address 0x");
+  //     if (address < 16)
+  //       Serial.print("0");
+  //     Serial.print(address, HEX);
+  //     Serial.println();
+  //     deviceCount++;
+  //   }
+  // }
 
 
-  if (deviceCount == 0)
-  {
-    Serial.println("No I2C devices found!");
-  }
-  else
-  {
-    Serial.print("Found ");
-    Serial.print(deviceCount);
-    Serial.println(" I2C device(s)");
-  }
+  // if (deviceCount == 0)
+  // {
+  //   Serial.println("No I2C devices found!");
+  // }
+  // else
+  // {
+  //   Serial.print("Found ");
+  //   Serial.print(deviceCount);
+  //   Serial.println(" I2C device(s)");
+  // }
 
-  // Initialize MPU6050/6500/9250
-  Serial.println("Initializing MPU...");
-  mpu.initialize();
+  // // Initialize MPU6050/6500/9250
+  // Serial.println("Initializing MPU...");
+  // mpu.initialize();
 
-  delay(100);
+  // delay(100);
 
-  // Test connection
-  if (mpu.testConnection())
-  {
-    Serial.println("MPU connection successful!");
+  // // Test connection
+  // if (mpu.testConnection())
+  // {
+  //   Serial.println("MPU connection successful!");
 
-    // Configure similar to your working setup
-    // Set sample rate divider for 100 Hz (similar to your ConfigSrd)
-    mpu.setRate(9); // rate = 1000/(1+9) = 100Hz
+  //   // Configure similar to your working setup
+  //   // Set sample rate divider for 100 Hz (similar to your ConfigSrd)
+  //   mpu.setRate(9); // rate = 1000/(1+9) = 100Hz
 
-    // Set accelerometer range
-    mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4); // ±4g
+  //   // Set accelerometer range
+  //   mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4); // ±4g
 
-    // Set gyroscope range
-    mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500); // ±500°/s
+  //   // Set gyroscope range
+  //   mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500); // ±500°/s
 
-    // Set digital low pass filter
-    mpu.setDLPFMode(MPU6050_DLPF_BW_42); // 42Hz bandwidth
+  //   // Set digital low pass filter
+  //   mpu.setDLPFMode(MPU6050_DLPF_BW_42); // 42Hz bandwidth
 
-    Serial.print("Sample rate set to: ");
-    Serial.print((int)(1000 / (9 + 1)));
-    Serial.println(" Hz");
+  //   Serial.print("Sample rate set to: ");
+  //   Serial.print((int)(1000 / (9 + 1)));
+  //   Serial.println(" Hz");
 
-    Serial.println("MPU configured successfully");
-    // Short beep to indicate successful initialization
-    beep(100);
-    beep(100);
-  }
-  else
-  {
-    Serial.println("MPU connection failed!");
-    Serial.println("Check wiring and power supply");
-    // Error tone - long beep
-    // beep(1000);
-  }
+  //   Serial.println("MPU configured successfully");
+  //   // Short beep to indicate successful initialization
+  //   beep(100);
+  //   beep(100);
+  // }
+  // else
+  // {
+  //   Serial.println("MPU connection failed!");
+  //   Serial.println("Check wiring and power supply");
+  //   // Error tone - long beep
+  //   // beep(1000);
+  // }
 
 
 
@@ -344,6 +352,7 @@ void loop()
 {
   // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
+  getVoltage();
   delay(LOOP_DELAY_MS);
 
   // // Control based on current mode
@@ -827,6 +836,29 @@ void beep(int duration) {
   tone(BUZZER_PIN, 2000); // 2kHz tone
   delay(duration);
   noTone(BUZZER_PIN);
+}
+
+ //
+/*
+* @brief 
+* Read voltage from battery (R3/(R1 + R2 + R3))
+* @remarks
+* R1, R2, R3 ~ 100k (97.5kΩ), Input voltage ~ MAX 12.6V, MIN 11.5V  
+*/
+void getVoltage() {
+  // static int rVal = 97.5;                       // 100kΩ ohm resistors (R1, R2, R3)
+  float divider = 1.0/3.0;                          // R3 / (R1 + R2 + R3) = (r/3r) = 1/3
+  float adcValue = analogRead(VOLTAGE_PIN);       // from voltage divider, range: 0-1023
+  float rawVoltage = adcValue * (5.0 / 1023.0);   // ratio: 1023 = 5V (max voltage of pin) 
+  float actVoltage =  rawVoltage / divider;     // Vout = Vin * R2 / (R1 + R2), in this case, R1 = (R1 + R2, ~200kΩ)
+  
+  float testAdcValuePinA1 = analogRead(A1);
+
+
+  Serial.println("ADC Value: " + String(adcValue) + 
+                 ", Raw Voltage: " + String(rawVoltage) + 
+                 ", Actual Voltage: " + String(actVoltage) + 
+                 ", A1 ADC Value: " + String(testAdcValuePinA1));
 }
 
 
