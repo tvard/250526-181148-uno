@@ -100,8 +100,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
         mt.right = 0;
         mt.skipSlewRate = true;
         return mt;
-    }
-    
+    } 
 
     // In-place turn (gentle / sharp turn) scenario
     if (isInDeadzone(js.correctedY) && !isInDeadzone(js.correctedX)) {
@@ -149,7 +148,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
     }
 
     // Trim left and right speeds according to LR ratio
-    if (js.steppedRatioLR != 0) {
+    if (js.steppedRatioLR != 0 && (sp > MIN_MOTOR_SPEED || sp < -MIN_MOTOR_SPEED)) {
 
         int diff = abs(sp * js.steppedRatioLR);
         
@@ -159,6 +158,29 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
         } else if (js.steppedRatioLR > 0) {
             mt.left = sp;
             mt.right = sp - diff;
+        }
+
+        // if any of the speeds is less than MIN_MOTOR_SPEED, raise both so both are >= MIN_MOTOR_SPEED, preserve difference
+        if ((mt.left > 0 && mt.left < MIN_MOTOR_SPEED) || (mt.right > 0 && mt.right < MIN_MOTOR_SPEED)) {
+            if (mt.left < MIN_MOTOR_SPEED) {
+                mt.right += MIN_MOTOR_SPEED - mt.left;
+                mt.left = MIN_MOTOR_SPEED;
+            }
+            if (mt.right < MIN_MOTOR_SPEED) {
+                mt.left += MIN_MOTOR_SPEED - mt.right;
+                mt.right = MIN_MOTOR_SPEED;
+            }
+        }
+        // same in reverse
+        if ((mt.left < 0 && mt.left > -MIN_MOTOR_SPEED) || (mt.right < 0 && mt.right > -MIN_MOTOR_SPEED)) {
+            if (mt.left > -MIN_MOTOR_SPEED) {
+                mt.right -= mt.left - MIN_MOTOR_SPEED;
+                mt.left = -MIN_MOTOR_SPEED;
+            }
+            if (mt.right > -MIN_MOTOR_SPEED) {
+                mt.left -= mt.right - MIN_MOTOR_SPEED;
+                mt.right = -MIN_MOTOR_SPEED;
+            }
         }
     }
 

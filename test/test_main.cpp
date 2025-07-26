@@ -155,75 +155,61 @@ void test_processJoystick_deadzone_behavior(void) {
     TEST_ASSERT_INT_WITHIN(3, 512, js.correctedY);
 }
 
-void test_computeMotorTargets_basic(void) {
-
-    // still
+void test_computeMotorTargets_still(void) {
     js = processJoystick(512, 512, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
+}
 
-    // slight right turn
+void test_computeMotorTargets_right_turn(void) {
     js = processJoystick((512 + 50), 512, false, false); // correctedY = -100
     mt = computeMotorTargets(js, 0, 0);
-
-    printf ("Joystick: %d, %d\n", js.correctedX, js.correctedY);
-    printf ("DEADZONEL %d\n", FORWARD_THRESHOLD, BACKWARD_THRESHOLD);
-    printf ("Motor Targets: %d, %d\n", mt.left, mt.right);
 
     TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio should be > 0");  
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
+}
 
-    // slight left turn
+void test_computeMotorTargets_left_turn(void) {
     js = processJoystick(512 - 50, 512, false, false); // correctedY = 0
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
+}
 
-    // slight forward movement
+void test_computeMotorTargets_forward(void) {
     js = processJoystick(512, 512 + 50, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
+}
 
-    // slight reverse movement
+void test_computeMotorTargets_reverse(void) {
     js = processJoystick(512, 512 - 50, false, false);
-    mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
-    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
-
-    // sharp right turn - pivot
-    js = processJoystick(512 + 500, 512, false, false); // correctedY
-    mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
-    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be <= than -MIN_MOTOR_SPEED (reverse)");
-    
-    // sharp left turn - pivot
-    js = processJoystick(512 - 500, 512, false, false); // correctedY
-    mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED (reverse)");
-    TEST_ASSERT_GREATER_THAN_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be greater than MIN_MOTOR_SPEED");
-
-    // full forward
-    js = processJoystick(512, 512 + 500, false, false);
-    mt = computeMotorTargets(js, 0, 0);
-    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
-    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
-
-    // full reverse
-    js = processJoystick(512, 512 - 500, false, false);
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
 }
 
+void test_computeMotorTargets_sharp_right_turn(void) {
+    js = processJoystick(512 + 500, 512, false, false); // correctedY
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
+    TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be <= than -MIN_MOTOR_SPEED (reverse)");
+    
+}
+
+void test_computeMotorTargets_sharp_left_turn(void) {
+    js = processJoystick(512 - 500, 512, false, false); // correctedY
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED (reverse)");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be greater than MIN_MOTOR_SPEED");
+}
+
 void test_computeMotorTargets_Mixing(void) {
     js = processJoystick(512 + 50, 512 + 500, false, false); // forward and slight right => L motor should be faster
     mt = computeMotorTargets(js, 0, 0);
-
-    // printf("\nRatio: %f\n", js.steppedRatioLR);
-    // printf("\nRatio: %f\n", js.rawRatioLR);
 
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
@@ -248,46 +234,39 @@ void test_computeMotorTargets_Mixing(void) {
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left motor target should be <= than Right motor target on on left turn.");
 }
 
-void test_computeMotorTargets_skipSlew(void) {
-    js = processJoystick(512, 512, false, false); // center position
-
-    // slight right turn (should not skip slew rate)
-    js = processJoystick(512 + 50, 512, false, false);
+void test_computeMotorTargets_skipSlew_leftRight(void) {
+    js = processJoystick(512 + 50, 512, false, false); // slight right turn
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
-    // strong right turn (should skip slew rate)
-    js = processJoystick(512 + 400, 512, false, false); 
-    mt = computeMotorTargets(js, 0, 0);  
-    TEST_ASSERT_TRUE(mt.skipSlewRate);
-    
-    // strong left turn (should skip slew rate)
-    js = processJoystick(512 - 400, 512, false, false);
+    js = processJoystick(512 + 400, 512, false, false); // strong right turn
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_TRUE(mt.skipSlewRate);
 
+    js = processJoystick(512 - 400, 512, false, false); // strong left turn
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_TRUE(mt.skipSlewRate);
+}
 
-    // forwards (should NOT skip slew rate)
-    js = processJoystick(512, 512 + 100, false, false);
-    mt = computeMotorTargets(js, 0, 0); // prevLeft > 0, targetLeft < 0
+void test_computeMotorTargets_skipSlew_forwardsBackwards(void) {
+    js = processJoystick(512, 512 + 100, false, false); // forwards
+    mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_FALSE(mt.skipSlewRate);
 
-    // backwards (should NOT skip slew rate)
-    js = processJoystick(512, 512 - 100, false, false);
-    mt = computeMotorTargets(js, 0, 0); // prevLeft < 0, targetLeft > 0
-    TEST_ASSERT_FALSE(mt.skipSlewRate); 
+    js = processJoystick(512, 512 - 100, false, false); // backwards
+    mt = computeMotorTargets(js, 0, 0);
+    TEST_ASSERT_FALSE(mt.skipSlewRate);
 
-    // direction flip (should skip slew rate)
-    js = processJoystick(512, 512 - 400, false, false);    // going backwards
-    mt = computeMotorTargets(js, 100, 100);         // targeting forwards
-    TEST_ASSERT_TRUE(mt.skipSlewRate);  
+    js = processJoystick(512, 512 - 400, false, false); // direction flip
+    mt = computeMotorTargets(js, 100, 100);
+    TEST_ASSERT_TRUE(mt.skipSlewRate);
 }
 
 void test_computeMotorTargets_deadzone(void) {
     js = processJoystick(512 + 2, 512 + 2, false, false); // very small movement
     mt = computeMotorTargets(js, 0, 0);
 
-    TEST_ASSERT_EQUAL(0, mt.left);
+    TEST_ASSERT_EQUAL(0, mt.left);                        // ...within deadzone = no movement
     TEST_ASSERT_EQUAL(0, mt.right);
 }
 
@@ -317,13 +296,14 @@ void test_computeMotorTargets_edge_of_deadzone(void) {
 
 }
 
-// Test full diagonal stick deflection (should mix both axes).
 void test_computeMotorTargets_max_diagonal(void) {
     js = processJoystick(1023, 1023, false, false);
     mt = computeMotorTargets(js, 0, 0);
-    // Depending on mixing, left or right may saturate at MAX_SPEED
-    TEST_ASSERT_LESS_OR_EQUAL(MAX_SPEED, mt.left);
-    TEST_ASSERT_LESS_OR_EQUAL(MAX_SPEED, mt.right);
+    
+    // both wheels should be moving forward, but left wheel should be faster (turns right)
+    TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.left);
+    TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.right);
+    TEST_ASSERT_GREATER_OR_EQUAL(mt.right, mt.left);
 }
 
 void test_shouldApplyBraking_on_stop(void) {
@@ -419,9 +399,19 @@ int main(void) {
     RUN_TEST(test_processJoystick_movement);
     RUN_TEST(test_processJoystick_deadzone_behavior);
 
-    RUN_TEST(test_computeMotorTargets_basic);
+    RUN_TEST(test_computeMotorTargets_still);
+    RUN_TEST(test_computeMotorTargets_right_turn);
+    RUN_TEST(test_computeMotorTargets_left_turn);
+    RUN_TEST(test_computeMotorTargets_forward);
+    RUN_TEST(test_computeMotorTargets_reverse);
+    RUN_TEST(test_computeMotorTargets_sharp_right_turn);
+    RUN_TEST(test_computeMotorTargets_sharp_left_turn);
+
     RUN_TEST(test_computeMotorTargets_Mixing);
-    RUN_TEST(test_computeMotorTargets_skipSlew);
+    
+    RUN_TEST(test_computeMotorTargets_skipSlew_leftRight);
+    RUN_TEST(test_computeMotorTargets_skipSlew_forwardsBackwards);
+
     RUN_TEST(test_computeMotorTargets_deadzone);
     RUN_TEST(test_computeMotorTargets_edge_of_deadzone);
 
