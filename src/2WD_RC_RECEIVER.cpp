@@ -872,3 +872,23 @@ void getVoltage() {
 //     delay(beepDuration);
 //   }
 // }
+
+
+/*
+New Pin Configuration:
++--------------+-------+----------------------+-----------------------------------------------+
+| NRF24L01 Pin | Pin # | Arduino Pro Mini Pin |                     Notes                     |
++--------------+-------+----------------------+-----------------------------------------------+
+| VCC          |     1 | 3.3V                 | NRF24L01 is 3.3V only (5V will damage it)     |
+| GND          |     2 | GND                  | Common ground                                 |
+| CE           |     3 | D10                  | Chip Enable (HIGH for RX/TX, LOW for standby) |
+| CSN          |     4 | D12                  | Chip Select (SPI, shared with MISO)           |
+| SCK          |     5 | D13 (SCK)            | SPI Clock                                     |
+| MOSI         |     6 | D11 (MOSI)           | Data from Arduino → NRF                       |
+| MISO         |     7 | D12 (MISO)           | Data from NRF → Arduino (shared with CSN)     |
+| IRQ          |     8 | Not connected        | Interrupt pin (optional)                      |
++--------------+-------+----------------------+-----------------------------------------------+
+
+
+
+*/
