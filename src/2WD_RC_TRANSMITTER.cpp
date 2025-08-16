@@ -1,50 +1,208 @@
 // pro16MHzatmega328 pinout: https://protosupplies.com/wp-content/uploads/2020/10/Pro-Mini-Board-Pinout.jpg
 
-#include <RH_ASK.h> // Include the RadioHead library
-#include <SPI.h>    // Include the SPI library (required for RadioHead)
+#include <SoftwareWire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <RF24.h>   // Include the RF24 library for NRF24L01
+#include <SPI.h>
 
-// Define Arduino Pro Mini Pins
-const int JOY_X_PIN = A0;       // Joystick X-axis 
-const int JOY_Y_PIN = A1;       // Joystick Y-axis 
-const int JOY_BUTTON_PIN = 16;  // Joystick button 
+#define VOLTAGE_SENSOR_PIN A0
+
+#define NRF_CE_PIN A0
+#define NRF_CSN_PIN 10
+#define NRF_SCK_PIN 13
+#define NRF_MOSI_PIN 11
+#define NRF_MISO_PIN 12
+
+#define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
+#define OLED_SCL_PIN A2   // OLED SCL 
+#define OLED_SDA_PIN A3   // OLED SDA 
+#define OLED_RESET_PIN   -1   // Reset pin (or -1 if sharing Arduino reset pin)
+
+#define JOY_X_PIN A0      // Joystick X-axis 
+#define JOY_Y_PIN A1      // Joystick Y-axis 
+#define JOY_BUTTON_PIN 16  // Joystick button 
 
 const int LOOP_DELAY_MS = 1;   // how often we run the main loop
 
-// Create an instance of the rf_driver radio object with optimized settings
-RH_ASK rf_driver(1200, 11, 12); // TX=11, RX=12 (RX unused in transmitter)
+// Shim: make SoftwareWire look like TwoWire
+class SoftTwoWire : public TwoWire {
+public:
+  SoftwareWire sw;
+
+  SoftTwoWire(uint8_t sda, uint8_t scl) : sw(sda, scl) {}
+
+  void begin() {
+    sw.begin();
+  }
+
+  void beginTransmission(uint8_t address) {
+    sw.beginTransmission(address);
+  }
+
+  uint8_t endTransmission(bool sendStop = true) {
+    return sw.endTransmission(sendStop);
+  }
+
+  size_t write(uint8_t data) {
+    return sw.write(data);
+  }
+
+  size_t write(const uint8_t *data, size_t quantity) {
+    return sw.write(data, quantity);
+  }
+
+  uint8_t requestFrom(uint8_t address, uint8_t quantity, bool sendStop = true) {
+    return sw.requestFrom(address, quantity, sendStop);
+  }
+
+  int available(void) {
+    return sw.available();
+  }
+
+  int read(void) {
+    return sw.read();
+  }
+
+  int peek(void) {
+    return sw.peek();
+  }
+
+  // void flush(void) {
+  //   sw.flush();
+  // }
+
+  // Dummy overrides to satisfy Adafruit_SSD1306 (ignored for SoftwareWire)
+  void setClock(uint32_t freq) {}
+};
+
+
+SoftTwoWire myWire(OLED_SDA_PIN, OLED_SCL_PIN);
+
+// Use shim instead of cast
+Adafruit_SSD1306 display(128, 32, &myWire, OLED_RESET_PIN);
+
+// SoftwareWire myWire(OLED_SDA_PIN, OLED_SCL_PIN);                        // bit-banging I2C (SoftwareWire Custom `Wire`)
+// Adafruit_SSD1306 display(128, 32,  (TwoWire*)&myWire, OLED_RESET_PIN);  // Pass it into SSD1306 instead of &Wire
+// Adafruit_SSD1306 display(128, 32,  &myWire, OLED_RESET_PIN);  // Pass it into SSD1306 instead of &Wire
+
+// Define the battery icon
+const uint8_t batteryIcon[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00,
+  0x1f, 0x00, 0x00, 0x00,
+  0x1f, 0x80, 0x00, 0x00,
+  0x1f, 0xc0, 0x00, 0x00,
+  0x1f, 0xe0, 0x00, 0x00,
+  0x1f, 0xf0, 0x00, 0x00,
+  0x1f, 0xf8, 0x00, 0x00,
+  0x1f, 0xfc, 0x00, 0x00,
+};
+
+const uint8_t radioIcon[] PROGMEM = {
+  0x00, 0x00, 0x00, 0x00,
+  0x18, 0x00, 0x00, 0x00,
+  0x18, 0x18, 0x00, 0x00,
+  0x18, 0x18, 0x18, 0x00,
+  0x18, 0x18, 0x18, 0x18,
+  0x18, 0x00, 0x00, 0x00,
+  0x00, 0x00, 0x00, 0x00,
+};
+
 
 // Packed data structure (4 bytes total)
-struct PackedData {
+struct PackedDataTransmit {
   uint16_t x : 10;  // 10 bits for X (0-1023)
   uint16_t y : 10;  // 10 bits for Y (0-1023)
   uint8_t btn : 1;   // Button state
   uint8_t crc : 5;   // Simple checksum (5 bits)
 };
 
+// From receiver: battery voltage, movement state, mode
+struct PackedDataReceive {
+  uint16_t voltage : 8 ; // 8 bits for voltage (0-255)
+  uint8_t mode : 2;      // 2 bits for mode (0-3)
+  uint8_t state : 2;     // 2 bits for movement state (0-3)
+  uint8_t crc : 4;       // 4 bits for CRC (0-15)
+};
+
+
+RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
+const byte address[6] = "00001";
+
+// declare prototypes
+void nrfSendData(PackedDataTransmit &data);
+PackedDataReceive nrfReceiveData();
+uint8_t calcCRCTransmit(PackedDataTransmit &data);
+uint8_t calcCRCReceive(PackedDataReceive &data);
+void displayInfo(PackedDataReceive &data, int throttlePercent);
+float calculatePacketSuccessRate();
+void scanI2C();
+
 int calibratedXCenterDrift = 0;
 int calibratedYCenterDrift = 0;
 
-// Simple CRC calculation (XOR-based)
-uint8_t calcCRC(uint16_t x, uint16_t y, bool btn) {
-  return (x ^ y ^ btn) & 0x1F; // Use 5-bit CRC
-}
+// Packet history for RF signal quality
+// This will help us calculate the success rate of RF packets
+const int PACKET_HISTORY_SIZE = 100;  // Store last 100 packets
+bool packetHistory[PACKET_HISTORY_SIZE];
+int packetIndex = 0;
+float rfPacketSuccessRate = 0.0;
+
+
 
 void setup() {
-  pinMode(JOY_BUTTON_PIN, INPUT_PULLUP);
   Serial.begin(9600);
-  
-  // Initialize with critical optimizations
-  if (rf_driver.init()) {
-    // rf_driver.crc();                   // Enable CRC checking
-    //    rf_driver.setPreambleLength(16);   // Longer preamble for sync
-    rf_driver.setModeIdle();           // Prevent spurious transmissions
-    
-    Serial.println("Radio initialized!");
-  } else {
-    Serial.println("Radio init failed!");
-    while(1);
+  Serial.println("Initializing...");
+
+  pinMode(JOY_BUTTON_PIN, INPUT_PULLUP);
+
+
+  Serial.println("Initializing...");
+
+  myWire.begin(); // Start bitbang I2C
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+    Serial.println("SSD1306 allocation failed");
+    for (;;); // Stop here
   }
 
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.println("Hello from A2/A3!");
+  display.display();
+  return;
+  // display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS, false, false); // Initialize display with I2C address and no reset pin
+  
+
+  // myWire.begin();   // you must start it yourself
+  // if (!display.begin()) {
+  //   Serial.println("SSD1306 allocation failed");
+  //   for (;;); // stop
+  // }
+
+  // Configure pins
+  // pinMode(OLED_SDA_PIN, OUTPUT);
+  // pinMode(OLED_SCL_PIN, OUTPUT);
+  // digitalWrite(OLED_SDA_PIN, HIGH);
+  // digitalWrite(OLED_SCL_PIN, HIGH);
+
+  // Initialize display with proper error checking
+  // if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
+  //   Serial.println(F("SSD1306 allocation failed"));
+  //   return; // stop
+  // }
+  
+  // display.display();
+  // delay(2000); // Pause for 2 seconds
+  // display.clearDisplay();
+  
+  // radio.begin();
+  // radio.openWritingPipe(address);
+  // radio.setPALevel(RF24_PA_MAX);  // Maximum power for longer range
+  // radio.stopListening();
+  
   // Calibration (unchanged)
   long xSum = 0, ySum = 0;
   const int samples = 40; // Fewer samples for faster startup
@@ -64,7 +222,7 @@ void setup() {
 }
 
 void loop() {
-  // 1. Read and calibrate
+  // Read and calibrate
   int rawX = analogRead(JOY_X_PIN) + calibratedXCenterDrift;
   int rawY = analogRead(JOY_Y_PIN) + calibratedYCenterDrift;
   bool buttonPressed = (digitalRead(JOY_BUTTON_PIN) == LOW);
@@ -73,21 +231,22 @@ void loop() {
   uint16_t xValue = constrain(rawX, 0, 1023);
   uint16_t yValue = constrain(rawY, 0, 1023);
 
-  // 2. Prepare packed data with CRC
-  PackedData data;
-  data.x = xValue;
-  data.y = yValue;
-  data.btn = buttonPressed;
-  data.crc = calcCRC(xValue, yValue, buttonPressed);
+  // Prepare packed data with CRC
+  PackedDataTransmit rData;
+  rData.x = xValue;
+  rData.y = yValue;
+  rData.btn = buttonPressed;
+  rData.crc = calcCRCTransmit(rData);
+  int throttlePercent = map(yValue, 0, 1023, 0, 100); // Map Y value to throttle percentage
 
-  // 3. Send with triple retransmission
-  for (int i = 0; i < 1; i++) {  // Send n times for redundancy
-    rf_driver.send((uint8_t*)&data, sizeof(data));
-    rf_driver.waitPacketSent();
-    // delay(5); // Short delay between transmits
-  }
+  // Send data via NRF24L01
+  nrfSendData(rData);
 
-  // 4. Debug output
+  // receive data from NRF24L01: battery voltage, movement state, mode
+  PackedDataReceive data = nrfReceiveData();
+  displayInfo(data, throttlePercent);
+
+  // Debug output
   Serial.print("X:");
   Serial.print(xValue);
   Serial.print(" Y:");
@@ -98,4 +257,113 @@ void loop() {
   Serial.println(data.crc, BIN);
 
   delay(LOOP_DELAY_MS); // Overall loop delay
+}
+
+// function to read information and dislay it in oled module
+/*
+Signal Strength (RSSI-style bar + percentage)
+Battery Voltage (Transmitter + Receiver if available)
+Drive Mode (e.g. SLEW/FAST + FORW/REV/STOP/LEFT/RIGHT)
+Throttle Position (0-100% bar)
+Packet Success Rate (Transmission reliability)
+*/
+void displayInfo(PackedDataReceive &data, int throttlePercent) {
+  display.clearDisplay();
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  // Line 1: Battery Voltages (y=0)
+  display.setCursor(0, 0);
+  display.drawBitmap(0, 0, batteryIcon, 8, 8, SSD1306_WHITE);
+  float receiverVoltage = map(data.voltage, 0, 255, 0, 4700) / 1000.0f;
+  float transmitterVoltage = map(analogRead(VOLTAGE_SENSOR_PIN), 0, 1023, 0, 4700) / 1000.0f;
+  display.print(receiverVoltage, 1);
+  display.print("V/");
+  display.print(transmitterVoltage, 1);
+  display.print("V");
+
+  // Line 2: RF Quality & Mode (y=8)
+  display.setCursor(0, 8);
+  display.drawBitmap(0, 8, radioIcon, 8, 8, SSD1306_WHITE);
+  display.print(int(rfPacketSuccessRate * 100));
+  display.print("% ");
+  display.print(data.mode ? "FWD" : "REV");
+
+  // Line 3: Throttle (y=16)
+  display.setCursor(0, 16);
+  display.print("Throttle: ");
+  display.print(throttlePercent);
+  display.print("%");
+
+  // Line 4: Reserved for future use (y=24)
+
+  display.display();
+}
+// Simple CRC calculation (XOR-based)
+uint8_t calcCRCTransmit(PackedDataTransmit &data) {
+  return (data.x ^ data.y ^ data.btn) & 0x1F; // Use 5-bit CRC
+}
+
+// Simple CRC calculation (XOR-based)
+uint8_t calcCRCReceive(PackedDataReceive &data) {
+  return (data.voltage ^ data.mode ^ data.state) & 0x1F; // Use 5-bit CRC
+}
+
+// Send joystick data via NRF24L01
+void nrfSendData(PackedDataTransmit &data) {
+    data.crc = calcCRCTransmit(data);
+    
+    // Store transmission result in history
+    bool success = radio.write(&data, sizeof(PackedDataTransmit));
+    packetHistory[packetIndex] = success;
+    packetIndex = (packetIndex + 1) % PACKET_HISTORY_SIZE;
+    
+    // Update success rate
+    rfPacketSuccessRate = calculatePacketSuccessRate();
+    
+    if (!success) {
+        Serial.println("NRF24L01 send failed!");
+    }
+}
+
+//receive data from NRF24L01: battery voltage, movement state, mode
+PackedDataReceive nrfReceiveData() {
+    PackedDataReceive data;
+    if (radio.available()) {
+        radio.read(&data, sizeof(PackedDataReceive));
+        // Verify CRC
+        if (data.crc == calcCRCReceive(data)) {
+            return data; // Valid data, return it
+        } else {
+            Serial.println("CRC mismatch!");
+        }
+    }
+    return {0, 0, 0, 0}; // Return empty data if no valid packet received
+}
+
+// Add this function to calculate success rate
+float calculatePacketSuccessRate() {
+    int successCount = 0;
+    for(int i = 0; i < PACKET_HISTORY_SIZE; i++) {
+        if(packetHistory[i]) successCount++;
+    }
+    return (float)successCount / PACKET_HISTORY_SIZE;
+}
+
+void scanI2C() {
+  byte error, address;
+  int devices = 0;
+  
+  Serial.println("Scanning I2C...");
+  for(address = 1; address < 127; address++) {
+    Wire.beginTransmission(address);
+    error = Wire.endTransmission();
+    if (error == 0) {
+      Serial.print("I2C device found at address 0x");
+      if (address < 16) Serial.print("0");
+      Serial.println(address, HEX);
+      devices++;
+    }
+  }
+  if (devices == 0) Serial.println("No I2C devices found");
 }
