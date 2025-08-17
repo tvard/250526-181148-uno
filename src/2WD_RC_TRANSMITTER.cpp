@@ -1,6 +1,5 @@
 // pro16MHzatmega328 pinout: https://protosupplies.com/wp-content/uploads/2020/10/Pro-Mini-Board-Pinout.jpg
 
-#include <SoftwareWire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <RF24.h>   // Include the RF24 library for NRF24L01
@@ -25,66 +24,9 @@
 
 const int LOOP_DELAY_MS = 1;   // how often we run the main loop
 
-// Shim: make SoftwareWire look like TwoWire
-class SoftTwoWire : public TwoWire {
-public:
-  SoftwareWire sw;
-
-  SoftTwoWire(uint8_t sda, uint8_t scl) : sw(sda, scl) {}
-
-  void begin() {
-    sw.begin();
-  }
-
-  void beginTransmission(uint8_t address) {
-    sw.beginTransmission(address);
-  }
-
-  uint8_t endTransmission(bool sendStop = true) {
-    return sw.endTransmission(sendStop);
-  }
-
-  size_t write(uint8_t data) {
-    return sw.write(data);
-  }
-
-  size_t write(const uint8_t *data, size_t quantity) {
-    return sw.write(data, quantity);
-  }
-
-  uint8_t requestFrom(uint8_t address, uint8_t quantity, bool sendStop = true) {
-    return sw.requestFrom(address, quantity, sendStop);
-  }
-
-  int available(void) {
-    return sw.available();
-  }
-
-  int read(void) {
-    return sw.read();
-  }
-
-  int peek(void) {
-    return sw.peek();
-  }
-
-  // void flush(void) {
-  //   sw.flush();
-  // }
-
-  // Dummy overrides to satisfy Adafruit_SSD1306 (ignored for SoftwareWire)
-  void setClock(uint32_t freq) {}
-};
-
-
-SoftTwoWire myWire(OLED_SDA_PIN, OLED_SCL_PIN);
 
 // Use shim instead of cast
-Adafruit_SSD1306 display(128, 32, &myWire, OLED_RESET_PIN);
-
-// SoftwareWire myWire(OLED_SDA_PIN, OLED_SCL_PIN);                        // bit-banging I2C (SoftwareWire Custom `Wire`)
-// Adafruit_SSD1306 display(128, 32,  (TwoWire*)&myWire, OLED_RESET_PIN);  // Pass it into SSD1306 instead of &Wire
-// Adafruit_SSD1306 display(128, 32,  &myWire, OLED_RESET_PIN);  // Pass it into SSD1306 instead of &Wire
+Adafruit_SSD1306 display(128, 32, &Wire, OLED_RESET_PIN);
 
 // Define the battery icon
 const uint8_t batteryIcon[] PROGMEM = {
