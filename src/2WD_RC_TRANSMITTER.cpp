@@ -98,7 +98,7 @@ void setup() {
 
   Wire.begin(); 
 
-  scanI2C();
+  // scanI2C();
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
     Serial.println("SSD1306 alloc failed");
@@ -116,36 +116,11 @@ void setup() {
 
   Serial.println("SSD1306 display() success");
 
-  return;
-  // display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS, false, false); // Initialize display with I2C address and no reset pin
-  
-
-  // myWire.begin();   // you must start it yourself
-  // if (!display.begin()) {
-  //   Serial.println("SSD1306 allocation failed");
-  //   for (;;); // stop
-  // }
-
   // Configure pins
-  // pinMode(OLED_SDA_PIN, OUTPUT);
-  // pinMode(OLED_SCL_PIN, OUTPUT);
-  // digitalWrite(OLED_SDA_PIN, HIGH);
-  // digitalWrite(OLED_SCL_PIN, HIGH);
-
-  // Initialize display with proper error checking
-  // if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-  //   Serial.println(F("SSD1306 allocation failed"));
-  //   return; // stop
-  // }
-  
-  // display.display();
-  // delay(2000); // Pause for 2 seconds
-  // display.clearDisplay();
-  
-  // radio.begin();
-  // radio.openWritingPipe(address);
-  // radio.setPALevel(RF24_PA_MAX);  // Maximum power for longer range
-  // radio.stopListening();
+  radio.begin();
+  radio.openWritingPipe(address);
+  radio.setPALevel(RF24_PA_MAX);  // Maximum power for longer range
+  radio.stopListening();
   
   // Calibration (unchanged)
   long xSum = 0, ySum = 0;
@@ -300,12 +275,17 @@ void scanI2C() {
   
   Serial.println("Scanning I2C...");
   for(address = 1; address < 127; address++) {
+    Serial.print("Scanning address: ");
+    Serial.print(address);
     Wire.beginTransmission(address);
+    Serial.print(" Beginning trans... ");
     error = Wire.endTransmission();
+    Serial.println(" Ending trans... ");
     if (error == 0) {
       Serial.print("I2C device found at address 0x");
       if (address < 16) Serial.print("0");
       Serial.println(address, HEX);
+      return; // assume 1 connection only ( remove if multiple devices)
       devices++;
     }
   }
