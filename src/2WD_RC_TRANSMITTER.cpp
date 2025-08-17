@@ -14,8 +14,6 @@
 #define NRF_MISO_PIN 12
 
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-#define OLED_SCL_PIN A2   // OLED SCL 
-#define OLED_SDA_PIN A3   // OLED SDA 
 #define OLED_RESET_PIN   -1   // Reset pin (or -1 if sharing Arduino reset pin)
 
 #define JOY_X_PIN A0      // Joystick X-axis 
@@ -98,22 +96,26 @@ void setup() {
 
   pinMode(JOY_BUTTON_PIN, INPUT_PULLUP);
 
+  Wire.begin(); 
 
-  Serial.println("Initializing...");
-
-  myWire.begin(); // Start bitbang I2C
+  scanI2C();
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println("SSD1306 allocation failed");
+    Serial.println("SSD1306 alloc failed");
     for (;;); // Stop here
   }
+
+  Serial.println("SSD1306 alloc success");
 
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
   display.setCursor(0, 0);
-  display.println("Hello from A2/A3!");
+  display.println("Hello!");
   display.display();
+
+  Serial.println("SSD1306 display() success");
+
   return;
   // display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS, false, false); // Initialize display with I2C address and no reset pin
   
