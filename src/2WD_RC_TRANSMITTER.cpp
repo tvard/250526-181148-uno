@@ -26,27 +26,29 @@ const int LOOP_DELAY_MS = 1;   // how often we run the main loop
 // Use shim instead of cast
 Adafruit_SSD1306 display(128, 32, &Wire, OLED_RESET_PIN);
 
-// Define the battery icon
+// 8x8 battery icon
 const uint8_t batteryIcon[] PROGMEM = {
-  0x00, 0x00, 0x00, 0x00,
-  0x1f, 0x00, 0x00, 0x00,
-  0x1f, 0x80, 0x00, 0x00,
-  0x1f, 0xc0, 0x00, 0x00,
-  0x1f, 0xe0, 0x00, 0x00,
-  0x1f, 0xf0, 0x00, 0x00,
-  0x1f, 0xf8, 0x00, 0x00,
-  0x1f, 0xfc, 0x00, 0x00,
+  0b01111110, // ###### 
+  0b11111111, // ########
+  0b10011001, // #  ##  #
+  0b10011001, // #  ##  #
+  0b10011001, // #  ##  #
+  0b10011001, // #  ##  #
+  0b11111111, // ########
+  0b01111110  //  ######
 };
 
 const uint8_t radioIcon[] PROGMEM = {
-  0x00, 0x00, 0x00, 0x00,
-  0x18, 0x00, 0x00, 0x00,
-  0x18, 0x18, 0x00, 0x00,
-  0x18, 0x18, 0x18, 0x00,
-  0x18, 0x18, 0x18, 0x18,
-  0x18, 0x00, 0x00, 0x00,
-  0x00, 0x00, 0x00, 0x00,
+  0b00011000, //    ##
+  0b00111100, //   ####
+  0b01111110, //  ######
+  0b11111111, // ########
+  0b01111110, //  ######
+  0b00111100, //   ####
+  0b00011000, //    ##
+  0b00000000  //        
 };
+
 
 
 // Packed data structure (4 bytes total)
@@ -75,6 +77,11 @@ PackedDataReceive nrfReceiveData();
 uint8_t calcCRCTransmit(PackedDataTransmit &data);
 uint8_t calcCRCReceive(PackedDataReceive &data);
 void displayInfo(PackedDataReceive &data, int throttlePercent);
+void drawBattery(float voltage, int barX, int barY, int barW);
+void drawSignal(float successRate, int baseX, int baseY);
+void drawPacketSuccess(float successRate, int barX, int barY);
+void drawThrottle(int throttlePercent, int barX, int barY);
+
 float calculatePacketSuccessRate();
 void scanI2C();
 
@@ -191,33 +198,93 @@ void displayInfo(PackedDataReceive &data, int throttlePercent) {
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
 
-  // Line 1: Battery Voltages (y=0)
-  display.setCursor(0, 0);
-  display.drawBitmap(0, 0, batteryIcon, 8, 8, SSD1306_WHITE);
+  // Line 1: Battery
   float receiverVoltage = map(data.voltage, 0, 255, 0, 4700) / 1000.0f;
   float transmitterVoltage = map(analogRead(VOLTAGE_SENSOR_PIN), 0, 1023, 0, 4700) / 1000.0f;
-  display.print(receiverVoltage, 1);
-  display.print("V/");
-  display.print(transmitterVoltage, 1);
-  display.print("V");
 
-  // Line 2: RF Quality & Mode (y=8)
-  display.setCursor(0, 8);
-  display.drawBitmap(0, 8, radioIcon, 8, 8, SSD1306_WHITE);
+  display.setCursor(0, 0);
+  display.drawBitmap(0, 0, batteryIcon, 8, 8, SSD1306_WHITE);
+  drawBattery(receiverVoltage, 10, 1, 35);
+  display.drawBitmap(60, 0, batteryIcon, 8, 8, SSD1306_WHITE);
+  drawBattery(transmitterVoltage, 75, 1, 35);
+
+  // Line 2: RF Quality
+  display.setCursor(0, 9);
+  display.drawBitmap(0, 9, radioIcon, 8, 8, SSD1306_WHITE);
+  drawSignal(rfPacketSuccessRate, 12, 16);  
+  display.setCursor(100, 9);
   display.print(int(rfPacketSuccessRate * 100));
-  display.print("% ");
-  display.print(data.mode ? "FWD" : "REV");
-
-  // Line 3: Throttle (y=16)
-  display.setCursor(0, 16);
-  display.print("Throttle: ");
-  display.print(throttlePercent);
   display.print("%");
 
-  // Line 4: Reserved for future use (y=24)
+  // Line 3: Throttle
+  drawThrottle(throttlePercent, 0, 18);
+
+  // Line 4: Packet success bar (optional, can merge with RF)
 
   display.display();
 }
+
+
+void drawThrottle(int throttlePercent, int barX, int barY)
+{
+  int barH = 8;  // height of bar
+  int barW = 52; // total width of bar
+
+  display.setCursor(0, barY);
+  display.print("Thrott");
+  int offsetX = 40; // this inclused the text prefix above
+
+  // Draw outline
+  display.drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
+
+  // Fill proportional to throttlePercent
+  int fillW = map(throttlePercent, 0, 100, 0, barW - 2); // -2 so it stays inside border
+  display.fillRect(barX + offsetX, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+  display.setCursor(offsetX +  barW + 2, barY);
+  display.print(throttlePercent);
+  display.print('%');
+}
+
+void drawBattery(float voltage, int barX, int barY, int barW) {
+  int barH = 6;
+
+  // Example: map 3.0–4.2V to bar range
+  int fillW = map(int(voltage * 100), 300, 420, 0, barW - 2);
+  fillW = constrain(fillW, 0, barW - 2);
+
+  display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
+  display.fillRect(barX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+}
+
+void drawSignal(float successRate, int baseX, int baseY) {
+  int maxBars = 8;
+  int bars = map(int(successRate * 100), 0, 100, 0, maxBars); // how many filled
+  int barW = 2;       // narrower since we have 10
+  int spacing = 1;    // 1px between bars
+  int maxHeight = 8; // tallest bar = 10px
+
+  for (int i = 0; i < maxBars; i++) {
+    // Scale heights 1 → maxHeight
+    int h = map(i + 1, 1, maxBars, 2, maxHeight);
+    int x = baseX + i * (barW + spacing);
+    int y = baseY - h; // align bottom at baseY
+
+    if (i < bars) {
+      display.fillRect(x, y, barW, h, SSD1306_WHITE);
+    } else {
+      display.drawRect(x, y, barW, h, SSD1306_WHITE);
+    }
+  }
+}
+
+void drawPacketSuccess(float successRate, int barX, int barY) {
+  int barW = 60, barH = 4;
+  int fillW = map(int(successRate * 100), 0, 100, 0, barW - 2);
+  display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
+  display.fillRect(barX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+}
+
+
 // Simple CRC calculation (XOR-based)
 uint8_t calcCRCTransmit(PackedDataTransmit &data) {
   return (data.x ^ data.y ^ data.btn) & 0x1F; // Use 5-bit CRC
