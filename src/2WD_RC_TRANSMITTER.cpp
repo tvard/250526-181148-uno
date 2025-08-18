@@ -22,7 +22,6 @@
 
 const int LOOP_DELAY_MS = 1;   // how often we run the main loop
 
-
 // Use shim instead of cast
 Adafruit_SSD1306 display(128, 32, &Wire, OLED_RESET_PIN);
 
@@ -37,6 +36,19 @@ const uint8_t batteryIcon[] PROGMEM = {
   0b11111111, // ########
   0b01111110  //  ######
 };
+// 12x8 battery icon with "Tx" using the better outline structure
+const uint8_t batteryTxIcon[] PROGMEM = {
+  0b01111111, 0b0000,   // .#########..
+  0b11111111, 0b0000,   // ############
+  0b10111101, 0b0000,   // #.####..#..#
+  0b10001001, 0b0000,   // #...#...#..#
+  0b10001001, 0b0000,   // #...#...#..#
+  0b10000000, 0b0101,   // #..........#
+  0b10000000, 0b0100,   // ############
+  0b01111111, 0b0110    // .#########..
+};
+
+
 
 const uint8_t radioIcon[] PROGMEM = {
   0b00011000, //    ##
@@ -201,11 +213,28 @@ void displayInfo(PackedDataReceive &data, int throttlePercent) {
   // Line 1: Battery
   float receiverVoltage = map(data.voltage, 0, 255, 0, 4700) / 1000.0f;
   float transmitterVoltage = map(analogRead(VOLTAGE_SENSOR_PIN), 0, 1023, 0, 4700) / 1000.0f;
+  
+
+
+  // 0v = null => default to 50%
+  if (receiverVoltage == 0.0) {
+    receiverVoltage = 4.2 - ((4.2 - 2.8) / 2.0);
+  }
+  if (transmitterVoltage == 0.0) {
+    transmitterVoltage = 4.2 - ((4.2 - 2.8) / 2.0);
+  }
+
+
 
   display.setCursor(0, 0);
   display.drawBitmap(0, 0, batteryIcon, 8, 8, SSD1306_WHITE);
-  drawBattery(receiverVoltage, 10, 1, 35);
+  display.setCursor(9, 0);
+  display.print('R');
+  drawBattery(receiverVoltage, 15, 1, 35);
+
   display.drawBitmap(60, 0, batteryIcon, 8, 8, SSD1306_WHITE);
+  display.setCursor(69, 0);
+  display.print('T');
   drawBattery(transmitterVoltage, 75, 1, 35);
 
   // Line 2: RF Quality
@@ -249,7 +278,7 @@ void drawBattery(float voltage, int barX, int barY, int barW) {
   int barH = 6;
 
   // Example: map 3.0–4.2V to bar range
-  int fillW = map(int(voltage * 100), 300, 420, 0, barW - 2);
+  int fillW = map(int(voltage * 100), 280, 420, 0, barW - 2);
   fillW = constrain(fillW, 0, barW - 2);
 
   display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
