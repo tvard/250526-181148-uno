@@ -4,10 +4,7 @@
 // For PlatformIO/Arduino
 #include <Arduino.h>
 #include <Wire.h>
-#include "I2Cdev.h"
-#include <RH_ASK.h>  // RadioHead library for RF
-#include <SPI.h>     // SPI required by RadioHead
-#include "MPU6050.h" // MPU6050 IMU library
+#include <RF24.h>    // NRF24L01 library
 #include "helpers.h"
 #include "pitches.h"
 
@@ -24,10 +21,19 @@ const int MODE_BUTTON_PIN = 6;
 const int ULTRASONIC_TRIG = 12;
 const int ULTRASONIC_ECHO = 13;
 
-// Initialize the RH_ASK driver - FM 433 MHz
-// Default: 2000 bps - must match transmitter speed.  Slower = better range / integrity at range, but less responsive
-// Default Pins: RX on pin 11, TX on pin 12 (RH_ASK, change as needed in ctor)
-RH_ASK rf_driver(1200);
+// NRF24L01 Pin Definitions
+const int NRF_CE_PIN = A0;   // CE pin
+const int NRF_CSN_PIN = 10;  // CSN pin
+const int NRF_IRQ_PIN = A1;  // IRQ pin (optional)
+
+// Initialize the NRF24L01 driver
+RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
+
+// Radio configuration
+const byte addresses[][6] = {"00001", "00002"}; // 5-byte addresses for bidirectional communication
+const int RADIO_CHANNEL = 76; // Channel 0-125 (2.4GHz + channel MHz)
+const rf24_datarate_e DATA_RATE = RF24_250KBPS; // RF24_250KBPS, RF24_1MBPS, or RF24_2MBPS
+const rf24_pa_dbm_e POWER_LEVEL = RF24_PA_HIGH; // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
 
 // Structure for joystick data - MUST MATCH THE TRANSMITTER EXACTLY
 struct JoystickData
@@ -35,17 +41,8 @@ struct JoystickData
   int xValue;
   int yValue;
   bool buttonPressed;
+  uint8_t checksum; // Simple checksum for data integrity
 };
-
-struct PackedData
-{
-  uint16_t x : 10; // 10 bits for X (0-1023)
-  uint16_t y : 10; // 10 bits for Y (0-1023)
-  uint8_t btn : 1; // Button state
-  uint8_t crc : 5; // Simple checksum (5 bits)
-};
-
-PackedData rcvData;
 
 // Control variables
 bool autoMode = false;            // Start in manual mode
@@ -59,26 +56,18 @@ int joystickX = 512; // Center position (range: 0-1023)
 int joystickY = 512; // Center position (range: 0-1023)
 bool joystickButton = false;
 
-// IMU setup - Using MPU6050 library (compatible with MPU6500/9250)
-MPU6050 mpu;
-
 float ax, ay, az;
 float gx, gy, gz;
 
 // Function prototypes (good practice) => must be declared here before usage below
-// void checkModeButton();
 void manualMode();
 void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResult &js, ManualModeOutputs &out, bool brakingApplied);
-// void autonomousMode();
-// void readIMU();
-// long getDistance();
 void setMotorSpeeds(int leftSpeed, int rightSpeed);
 void stopMotors();
-// void turnLeft(int angle);
-// void turnRight(int angle);
 void beep(int duration);
-// void beepPattern(int beeps, int beepDuration);
+void beep(bool isActive);
 bool readRFSignals();
+uint8_t calculateChecksum(const JoystickData& data);
 
 String pad5(int val);
 String pad5f(float val);
@@ -98,12 +87,12 @@ bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt) {
   // 1) Melody data
 
 // Frequencies (Hz) for each pitch:
-//   G4 = 392, C5 = 523, E5 = 659, G5 = 784, C6 = 1047, E6 = 1319
+//   G4 = 392, C5 = 523, E5 = 659, G5 = 784, C6 = 1047, E6 = 1319
 static const int melody[] = {
   NOTE_G4, NOTE_E5, NOTE_C5, NOTE_E5,  // pickup + beat 1
   NOTE_G5, NOTE_G5,                    // end of bar 1
   NOTE_E5, NOTE_G5, NOTE_E5, NOTE_C5,  // bar 2 first four eighths
-  NOTE_E5, NOTE_G5                    // bar 2 next two eighths (~15 s mark)
+  NOTE_E5, NOTE_G5                    // bar 2 next two eighths (~15 s mark)
 };
 
 // Duration type: 8 = eighth note, 4 = quarter note
@@ -128,7 +117,7 @@ static const int noteType[] = {
   if (shouldInterrupt || state.noteIndex >= totalNotes) {
     noTone(BUZZER_PIN);
     state.noteIndex  = 0;
-    state.phase      = 0;   // reset to “play” phase
+    state.phase      = 0;   // reset to "play" phase
     state.phaseStart = 0;
     return false;
   }
@@ -136,7 +125,7 @@ static const int noteType[] = {
   unsigned long now = millis();
 
   // ——————————————————————————————————————————————————————————————
-  // 3) Compute this note’s on‑time and pause‑time
+  // 3) Compute this note's on‑time and pause‑time
   unsigned long noteOnTime   = baseNote / noteType[state.noteIndex];
   unsigned long pauseTime    = noteOnTime / 4;  // 25% rest between notes
 
@@ -167,22 +156,57 @@ static const int noteType[] = {
 }
 
 
-
-
 void setup()
 {
   // Initialize serial communication for debugging
   Serial.begin(9600);
   Serial.println("RC Car Control System Starting...");
 
-  // Initialize RF driver
-  if (!rf_driver.init())
-  {
-    Serial.println("RF driver failed to initialize!");
-  }
-  else
-  {
-    Serial.println("RF driver initialized.");
+  // Initialize SPI for NRF24L01
+  SPI.begin();
+
+  // Initialize NRF24L01
+  if (!radio.begin()) {
+    Serial.println("NRF24L01 failed to initialize!");
+    // Error beep pattern
+    beep(1000);
+  } else {
+    Serial.println("NRF24L01 initialized successfully.");
+    
+    // Configure the radio
+    radio.setChannel(RADIO_CHANNEL);
+    radio.setDataRate(DATA_RATE);
+    radio.setPALevel(POWER_LEVEL);
+    radio.setPayloadSize(sizeof(JoystickData));
+    
+    // Enable auto-acknowledgment for reliability
+    radio.setAutoAck(true);
+    radio.enableAckPayload();
+    
+    // Set retry parameters (15 retries, 1500µs delay)
+    radio.setRetries(15, 15);
+    
+    // Open reading pipe (receiver)
+    radio.openReadingPipe(0, addresses[1]);  // Listen on address "00002"
+    radio.startListening();
+    
+    // Print configuration details
+    Serial.print("Channel: "); Serial.println(RADIO_CHANNEL);
+    Serial.print("Data Rate: ");
+    switch(DATA_RATE) {
+      case RF24_250KBPS: Serial.println("250KBPS"); break;
+      case RF24_1MBPS: Serial.println("1MBPS"); break;
+      case RF24_2MBPS: Serial.println("2MBPS"); break;
+    }
+    Serial.print("Power Level: ");
+    switch(POWER_LEVEL) {
+      case RF24_PA_MIN: Serial.println("MIN"); break;
+      case RF24_PA_LOW: Serial.println("LOW"); break;
+      case RF24_PA_HIGH: Serial.println("HIGH"); break;
+      case RF24_PA_MAX: Serial.println("MAX"); break;
+    }
+    
+    // Success beeps
     beep(100);
     beep(100);
   }
@@ -209,84 +233,6 @@ void setup()
   Wire.begin();
   Wire.setClock(100000); // Start with slower I2C speed (100kHz)
 
-  delay(500); // Longer delay for MPU to stabilize
-
-  Serial.println("Starting I2C bus...");
-
-  // Scan for I2C devices first
-  Serial.println("Scanning for I2C devices...");
-  byte error, address;
-  int deviceCount = 0;
-
-  for (address = 1; address < 127; address++)
-  {
-    Wire.beginTransmission(address);
-    error = Wire.endTransmission();
-
-    if (error == 0)
-    {
-      Serial.print("I2C device found at address 0x");
-      if (address < 16)
-        Serial.print("0");
-      Serial.print(address, HEX);
-      Serial.println();
-      deviceCount++;
-    }
-  }
-
-
-  if (deviceCount == 0)
-  {
-    Serial.println("No I2C devices found!");
-  }
-  else
-  {
-    Serial.print("Found ");
-    Serial.print(deviceCount);
-    Serial.println(" I2C device(s)");
-  }
-
-  // Initialize MPU6050/6500/9250
-  Serial.println("Initializing MPU...");
-  mpu.initialize();
-
-  delay(100);
-
-  // Test connection
-  if (mpu.testConnection())
-  {
-    Serial.println("MPU connection successful!");
-
-    // Configure similar to your working setup
-    // Set sample rate divider for 100 Hz (similar to your ConfigSrd)
-    mpu.setRate(9); // rate = 1000/(1+9) = 100Hz
-
-    // Set accelerometer range
-    mpu.setFullScaleAccelRange(MPU6050_ACCEL_FS_4); // ±4g
-
-    // Set gyroscope range
-    mpu.setFullScaleGyroRange(MPU6050_GYRO_FS_500); // ±500°/s
-
-    // Set digital low pass filter
-    mpu.setDLPFMode(MPU6050_DLPF_BW_42); // 42Hz bandwidth
-
-    Serial.print("Sample rate set to: ");
-    Serial.print((int)(1000 / (9 + 1)));
-    Serial.println(" Hz");
-
-    Serial.println("MPU configured successfully");
-    // Short beep to indicate successful initialization
-    beep(100);
-    beep(100);
-  }
-  else
-  {
-    Serial.println("MPU connection failed!");
-    Serial.println("Check wiring and power supply");
-    // Error tone - long beep
-    // beep(1000);
-  }
-
   // Stop all motors initially
   stopMotors();
 
@@ -301,53 +247,10 @@ void setup()
 
 void loop()
 {
-  // checkModeButton(); // Enable mode switching
   manualMode(); // This will be called inside the if/else for autoMode
   delay(LOOP_DELAY_MS);
-
-  // // Control based on current mode
-  // if (autoMode) {
-  //   autonomousMode();
-  // } else {
-  //   manualMode();
-  // }
 }
 
-// void checkModeButton()
-// {
-//   int reading = digitalRead(MODE_BUTTON_PIN);
-
-//   // Debouncing
-//   if (reading != lastButtonState)
-//   {
-//     lastButtonState = reading;
-
-//     // If the button is pressed (LOW due to pull-up)
-//     if (reading == LOW)
-//     {
-//       // Debounce timing - prevent multiple toggles
-//       if (millis() - lastModeChange > 300)
-//       { // Increased debounce to 300ms
-//         autoMode = !autoMode;
-//         lastModeChange = millis();
-
-//         // Indicate mode change with beep
-//         if (autoMode)
-//         {
-//           Serial.println("Switching to AUTO mode");
-//           beep(300); // Long beep for auto mode
-//         }
-//         else
-//         {
-//           Serial.println("Switching to MANUAL mode");
-//           beepPattern(2, 100); // Two short beeps for manual mode
-//         }
-//         // Stop motors immediately on mode change for safety
-//         stopMotors();
-//       }
-//     }
-//   }
-// }
 
 void manualMode()
 {
@@ -357,7 +260,7 @@ void manualMode()
 
   bool isRead = readRFSignals();
 
-  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
+  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
 
   if (isRead)
   {
@@ -376,7 +279,7 @@ void manualMode()
     prevRightSpeed = rightSpeed;
 
     // Buzzer
-    // entertainerState.playing = playEntertainerStep(entertainerState, buzzerEnabled);
+    beep(out.buzzerOn);
 
     manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
     Serial.println();
@@ -449,10 +352,15 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
   Serial.print(pad5(js.correctedY));
 }
 
-// Simple CRC calculation (XOR-based)
-uint8_t calcCRC(uint16_t x, uint16_t y, bool btn)
-{
-  return (x ^ y ^ btn) & 0x1F; // Use 5-bit CRC
+// Calculate checksum for data integrity
+uint8_t calculateChecksum(const JoystickData& data) {
+  uint8_t checksum = 0;
+  checksum ^= (data.xValue & 0xFF);
+  checksum ^= ((data.xValue >> 8) & 0xFF);
+  checksum ^= (data.yValue & 0xFF);
+  checksum ^= ((data.yValue >> 8) & 0xFF);
+  checksum ^= data.buttonPressed ? 0xFF : 0x00;
+  return checksum;
 }
 
 /// @brief
@@ -461,26 +369,45 @@ uint8_t calcCRC(uint16_t x, uint16_t y, bool btn)
 /// Returns true if data was successfully received and updated, false otherwise.
 bool readRFSignals()
 {
-  uint8_t buf[RH_ASK_MAX_MESSAGE_LEN];
-  uint8_t buflen = sizeof(buf);
-
-  if (rf_driver.recv(buf, &buflen))
-  {
-    // Copy to struct
-    memcpy(&rcvData, buf, min(buflen, sizeof(rcvData)));
-
-    // Verify CRC
-    if (rcvData.crc == calcCRC(rcvData.x, rcvData.y, rcvData.btn))
-    {
-      // Valid data!
-      joystickX = rcvData.x;
-      joystickY = rcvData.y;
-      joystickButton = rcvData.btn;
-
+  static unsigned long lastReceiveTime = 0;
+  static int consecutiveFailures = 0;
+  
+  if (radio.available()) {
+    JoystickData receivedData;
+    
+    // Read the payload
+    radio.read(&receivedData, sizeof(JoystickData));
+    
+    // Verify checksum
+    uint8_t calculatedChecksum = calculateChecksum(receivedData);
+    if (receivedData.checksum == calculatedChecksum) {
+      // Valid data received
+      joystickX = receivedData.xValue;
+      joystickY = receivedData.yValue;
+      joystickButton = receivedData.buttonPressed;
+      
+      lastReceiveTime = millis();
+      consecutiveFailures = 0;
+      
       return true;
+    } else {
+      // Checksum mismatch - corrupted data
+      Serial.print("Checksum error: expected ");
+      Serial.print(calculatedChecksum);
+      Serial.print(", received ");
+      Serial.println(receivedData.checksum);
+      consecutiveFailures++;
     }
   }
-
+  
+  // Check for communication timeout
+  if (millis() - lastReceiveTime > 1000) { // 1 second timeout
+    if (consecutiveFailures > 10) {
+      Serial.println("Too many consecutive RF failures - check transmitter");
+      consecutiveFailures = 0; // Reset to avoid spam
+    }
+  }
+  
   return false;
 }
 
@@ -697,82 +624,50 @@ void stopMotors()
   analogWrite(RIGHT_MOTOR_EN, 0);
 }
 
-// void turnLeft(int angle)
-// {
-//   // Simple timed turn - can be refined with IMU for more precise angles
-//   stopMotors();
-//   delay(100);
-
-//   // Tank turn left - right wheel forward, left wheel backward
-//   digitalWrite(LEFT_MOTOR_IN1, LOW);
-//   digitalWrite(LEFT_MOTOR_IN2, HIGH);
-//   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
-
-//   digitalWrite(RIGHT_MOTOR_IN1, HIGH);
-//   digitalWrite(RIGHT_MOTOR_IN2, LOW);
-//   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
-
-//   // Time-based turn - approximately 90 degrees
-//   delay(TURN_TIME * angle / 90);
-
-//   stopMotors();
-// }
-
-// void turnRight(int angle)
-// {
-//   // Simple timed turn - can be refined with IMU for more precise angles
-//   stopMotors();
-//   delay(100);
-
-//   // Tank turn right - left wheel forward, right wheel backward
-//   digitalWrite(LEFT_MOTOR_IN1, HIGH);
-//   digitalWrite(LEFT_MOTOR_IN2, LOW);
-//   analogWrite(LEFT_MOTOR_EN, MAX_SPEED * 0.7);
-
-//   digitalWrite(RIGHT_MOTOR_IN1, LOW);
-//   digitalWrite(RIGHT_MOTOR_IN2, HIGH);
-//   analogWrite(RIGHT_MOTOR_EN, MAX_SPEED * 0.7);
-
-//   // Time-based turn - approximately 90 degrees
-//   delay(TURN_TIME * angle / 90);
-
-//   stopMotors();
-// }
-
 void beep(int duration) {
-  tone(BUZZER_PIN, 2000); // 2kHz tone
+  tone(BUZZER_PIN, 1000);  // Play 1kHz tone
   delay(duration);
   noTone(BUZZER_PIN);
 }
 
+// this is intended to run in loop()
+void beep(bool isActive){
+  if(isActive){
+    tone(BUZZER_PIN, 1000);  // Play 1kHz tone
+  }
+  else{
+    noTone(BUZZER_PIN);
+  }
+}
 
-// void beepPattern(int beeps, int beepDuration)
-// {
-//   for (int b = 0; b < beeps; b++)
-//   { // Changed loop variable from 'i' to 'b' to avoid conflict with global 'i'
-//     digitalWrite(BUZZER_PIN, HIGH);
-//     delay(beepDuration);
-//     digitalWrite(BUZZER_PIN, LOW);
-//     delay(beepDuration);
-//   }
-// }
+void beginNRF()
+{
+  // Initialize the NRF24L01 module
+  radio.begin();
+  const byte address[6] = "00001";
+  radio.openWritingPipe(address);
+  radio.setPALevel(RF24_PA_MAX);  // Maximum power for longer range
+  radio.stopListening();
+}
 
+void endNRF()
+{
+  radio.stopListening();
+  radio.powerDown();
+}
 
 /*
-New Pin Configuration:
-+--------------+-------+----------------------+-----------------------------------------------+
-| NRF24L01 Pin | Pin # | Arduino Pro Mini Pin |                     Notes                     |
-+--------------+-------+----------------------+-----------------------------------------------+
-| VCC          |     1 | 3.3V                 | NRF24L01 is 3.3V only (5V will damage it)     |
-| GND          |     2 | GND                  | Common ground                                 |
-| CE           |     3 | D10                  | Chip Enable (HIGH for RX/TX, LOW for standby) |
-| CSN          |     4 | D12                  | Chip Select (SPI, shared with MISO)           |
-| SCK          |     5 | D13 (SCK)            | SPI Clock                                     |
-| MOSI         |     6 | D11 (MOSI)           | Data from Arduino → NRF                       |
-| MISO         |     7 | D12 (MISO)           | Data from NRF → Arduino (shared with CSN)     |
-| IRQ          |     8 | Not connected        | Interrupt pin (optional)                      |
-+--------------+-------+----------------------+-----------------------------------------------+
+  New Pin Configuration:
 
-
+  | NRF24L01 pin | Arduino Pro Mini |                                 Notes                                 |
+  |--------------|------------------|-----------------------------------------------------------------------|
+  | VCC          | 3.3V             | Add a 10–47µF electrolytic (plus a 100nF ceramic) right at the module |
+  | GND          | GND              | Common ground                                                         |
+  | CE           | A0               | Any digital works; you chose A0 (ok)                                  |
+  | CSN          | D10              | SPI chip-select (keep as OUTPUT)                                      |
+  | SCK          | D13              | SPI clock                                                             |
+  | MOSI         | D11              | SPI data out                                                          |
+  | MISO         | D12              | SPI data in                                                           |
+  | IRQ          | A1 (optional)    | Only if you use interrupts; else leave NC                             |
 
 */
