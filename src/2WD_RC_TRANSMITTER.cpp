@@ -2,8 +2,8 @@
 
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
-#include <RF24.h>   // Include the RF24 library for NRF24L01
 #include <SPI.h>
+#include <RF24.h>   // Include the RF24 library for NRF24L01
 
 #define VOLTAGE_SENSOR_PIN A0
 
@@ -81,7 +81,6 @@ struct PackedDataReceive {
 
 
 RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
-const byte address[6] = "00001";
 
 // declare prototypes
 void nrfSendData(PackedDataTransmit &data);
@@ -137,6 +136,7 @@ void setup() {
 
   // Configure pins
   radio.begin();
+  const byte address[6] = "00001";
   radio.openWritingPipe(address);
   radio.setPALevel(RF24_PA_MAX);  // Maximum power for longer range
   radio.stopListening();
