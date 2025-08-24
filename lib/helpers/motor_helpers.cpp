@@ -144,43 +144,30 @@ bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetR
 
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw = true) {
     JoystickProcessingResult js;
-    js.correctedX = abs(joystickX) - 512; 
-    js.correctedX = joystickX < 0 ? -js.correctedX : js.correctedX;
 
     if (isRaw) {
-        // Center at zero and scale: from 0-1023 
-        int tempX = joystickX;
-        int tempY = joystickY; 
-
-    js.correctedY = abs(joystickY) - 512; 
-    js.correctedY = joystickY < 0 ? -js.correctedY : js.correctedY;
-
-    // Serial.print("JS (Raw): "); Serial.print(joystickX); Serial.print(", "); Serial.println(joystickY);
-    // Serial.print("JS (Corrected): "); Serial.print(js.correctedX); Serial.print(", "); Serial.println(js.correctedY);
-        // Axes are swapped (X <-> Y)
-        js.correctedX = 1024 - tempY;
-        js.correctedY = 1024 - tempX;
+        // Raw joystick input: axes are swapped (X <-> Y) and inverted
+        // Center at zero and scale: from 0-1023 to -512 to +511
+        js.correctedX = 1023 - joystickY - 512;
+        js.correctedY = 1023 - joystickX - 512;
     }
     else {
-        js.correctedX = joystickX;
-        js.correctedY = joystickY;
+        js.correctedX = joystickX - 512;
+        js.correctedY = joystickY - 512;
     }
 
     js.buzzerOn = joystickButton;
-    js.rawRatioLR = ((float)js.correctedX) / 512.0f;
 
     // Raw turning ratio
-    js.rawRatioLR = ((float)(js.correctedX - 512)) / 512.0f;
+    js.rawRatioLR = ((float)js.correctedX) / 512.0f;
     js.rawRatioLR = constrain(js.rawRatioLR, -1.0f, 1.0f);
 
-    js.quantizeStep = 0.10f;
     // Quantized ratio
     js.quantizeStep = 0.05f;
     js.steppedRatioLR = round(js.rawRatioLR / js.quantizeStep) * js.quantizeStep;
 
-        
-     return js;
- }
+    return js;
+}
 
 ManualModeOutputs manualModeStep(const ManualModeInputs& in) {
     ManualModeOutputs out = {};

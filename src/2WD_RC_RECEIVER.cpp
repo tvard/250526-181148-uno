@@ -290,8 +290,12 @@ void manualMode()
     rightSpeed = 0;
 
     setMotorSpeeds(leftSpeed, rightSpeed);
-    rfLostCounter = 0;
-    Serial.println("RF SIGNAL LOSS: STOPPING...");
+    
+    // Only print RF loss message once, not continuously
+    if (rfLostCounter == 441 / LOOP_DELAY_MS) {
+      Serial.println("RF SIGNAL LOSS: STOPPING...");
+    }
+    rfLostCounter = 441 / LOOP_DELAY_MS; // Prevent overflow
   }
 }
 
@@ -332,7 +336,7 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
 
   Serial.print(" Targ Spd: ");
   Serial.print(pad5(out.outputLeft));
-  Serial.print("");
+  Serial.print(" ");
   Serial.print(pad5(out.outputRight));
 
   Serial.print(" Curr Spd: ");
@@ -531,6 +535,10 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
+  // Static variables to track previous states to avoid unnecessary PWM writes
+  static int prevLeftSpeed = 0;
+  static int prevRightSpeed = 0;
+
   if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) &&
       ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0)))
   {
@@ -578,36 +586,43 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
     rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
   }
 
-  // Set left motor direction and speed (RWD: positive = backward, negative = forward)
-  if (leftSpeed >= 0)
-  {
-    // Backward (RWD)
-    digitalWrite(LEFT_MOTOR_IN1, LOW);
-    digitalWrite(LEFT_MOTOR_IN2, HIGH);
-    analogWrite(LEFT_MOTOR_EN, leftSpeed);
-  }
-  else
-  {
-    // Forward (RWD)
-    digitalWrite(LEFT_MOTOR_IN1, HIGH);
-    digitalWrite(LEFT_MOTOR_IN2, LOW);
-    analogWrite(LEFT_MOTOR_EN, -leftSpeed);
+  // Only update motor states if they've changed
+  if (leftSpeed != prevLeftSpeed) {
+    // Set left motor direction and speed (RWD: positive = backward, negative = forward)
+    if (leftSpeed >= 0)
+    {
+      // Backward (RWD)
+      digitalWrite(LEFT_MOTOR_IN1, LOW);
+      digitalWrite(LEFT_MOTOR_IN2, HIGH);
+      analogWrite(LEFT_MOTOR_EN, leftSpeed);
+    }
+    else
+    {
+      // Forward (RWD)
+      digitalWrite(LEFT_MOTOR_IN1, HIGH);
+      digitalWrite(LEFT_MOTOR_IN2, LOW);
+      analogWrite(LEFT_MOTOR_EN, -leftSpeed);
+    }
+    prevLeftSpeed = leftSpeed;
   }
 
-  // Set right motor direction and speed (RWD: positive = backward, negative = forward)
-  if (rightSpeed >= 0)
-  {
-    // Backward (RWD)
-    digitalWrite(RIGHT_MOTOR_IN1, LOW);
-    digitalWrite(RIGHT_MOTOR_IN2, HIGH);
-    analogWrite(RIGHT_MOTOR_EN, rightSpeed);
-  }
-  else
-  {
-    // Forward (RWD)
-    digitalWrite(RIGHT_MOTOR_IN1, HIGH);
-    digitalWrite(RIGHT_MOTOR_IN2, LOW);
-    analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
+  if (rightSpeed != prevRightSpeed) {
+    // Set right motor direction and speed (RWD: positive = backward, negative = forward)
+    if (rightSpeed >= 0)
+    {
+      // Backward (RWD)
+      digitalWrite(RIGHT_MOTOR_IN1, LOW);
+      digitalWrite(RIGHT_MOTOR_IN2, HIGH);
+      analogWrite(RIGHT_MOTOR_EN, rightSpeed);
+    }
+    else
+    {
+      // Forward (RWD)
+      digitalWrite(RIGHT_MOTOR_IN1, HIGH);
+      digitalWrite(RIGHT_MOTOR_IN2, LOW);
+      analogWrite(RIGHT_MOTOR_EN, -rightSpeed);
+    }
+    prevRightSpeed = rightSpeed;
   }
 }
 

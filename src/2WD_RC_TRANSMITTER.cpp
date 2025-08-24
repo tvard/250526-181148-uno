@@ -5,20 +5,20 @@
 #include <SPI.h>
 #include <RF24.h>   // Include the RF24 library for NRF24L01
 
-#define VOLTAGE_SENSOR_PIN A0
+// Pin definitions - fixed conflicts
+#define JOY_X_PIN A0      // Joystick X-axis (primary use of A0)
+#define JOY_Y_PIN A1      // Joystick Y-axis 
+#define VOLTAGE_SENSOR_PIN A2 // Battery voltage sensor (moved to A2)
+#define JOY_BUTTON_PIN 16  // Joystick button 
 
-#define NRF_CE_PIN A0
-#define NRF_CSN_PIN 10
-#define NRF_SCK_PIN 13
-#define NRF_MOSI_PIN 11
-#define NRF_MISO_PIN 12
+#define NRF_CE_PIN 9      // NRF CE pin (moved to D9)
+#define NRF_CSN_PIN 10    // NRF CSN pin
+#define NRF_SCK_PIN 13    // SPI SCK
+#define NRF_MOSI_PIN 11   // SPI MOSI
+#define NRF_MISO_PIN 12   // SPI MISO
 
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
-#define OLED_RESET_PIN   -1   // Reset pin (or -1 if sharing Arduino reset pin)
-
-#define JOY_X_PIN A0      // Joystick X-axis 
-#define JOY_Y_PIN A1      // Joystick Y-axis 
-#define JOY_BUTTON_PIN 16  // Joystick button 
+#define OLED_RESET_PIN   -1   // Reset pin (or -1 if sharing Arduino reset pin) 
 
 const int LOOP_DELAY_MS = 1;   // how often we run the main loop
 
@@ -36,20 +36,8 @@ const uint8_t batteryIcon[] PROGMEM = {
   0b11111111, // ########
   0b01111110  //  ######
 };
-// 12x8 battery icon with "Tx" using the better outline structure
-const uint8_t batteryTxIcon[] PROGMEM = {
-  0b01111111, 0b0000,   // .#########..
-  0b11111111, 0b0000,   // ############
-  0b10111101, 0b0000,   // #.####..#..#
-  0b10001001, 0b0000,   // #...#...#..#
-  0b10001001, 0b0000,   // #...#...#..#
-  0b10000000, 0b0101,   // #..........#
-  0b10000000, 0b0100,   // ############
-  0b01111111, 0b0110    // .#########..
-};
 
-
-
+// 8x8 radio signal icon
 const uint8_t radioIcon[] PROGMEM = {
   0b00011000, //    ##
   0b00111100, //   ####
@@ -85,9 +73,9 @@ RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
 // declare prototypes
 void nrfSendData(PackedDataTransmit &data);
 PackedDataReceive nrfReceiveData();
-uint8_t calcCRCTransmit(PackedDataTransmit &data);
-uint8_t calcCRCReceive(PackedDataReceive &data);
-void displayInfo(PackedDataReceive &data, int throttlePercent);
+uint8_t calcCRCTransmit(const PackedDataTransmit &data);
+uint8_t calcCRCReceive(const PackedDataReceive &data);
+void displayInfo(const PackedDataReceive &data, int throttlePercent);
 void drawBattery(float voltage, int barX, int barY, int barW);
 void drawSignal(float successRate, int baseX, int baseY);
 void drawPacketSuccess(float successRate, int barX, int barY);
@@ -157,6 +145,12 @@ void setup() {
   Serial.print(calibratedXCenterDrift);
   Serial.print(" Y:");
   Serial.println(calibratedYCenterDrift);
+
+  // Initialize packet history for clean startup
+  for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
+    packetHistory[i] = false;
+  }
+  rfPacketSuccessRate = 0.0;
 }
 
 void loop() {
@@ -205,7 +199,7 @@ Drive Mode (e.g. SLEW/FAST + FORW/REV/STOP/LEFT/RIGHT)
 Throttle Position (0-100% bar)
 Packet Success Rate (Transmission reliability)
 */
-void displayInfo(PackedDataReceive &data, int throttlePercent) {
+void displayInfo(const PackedDataReceive &data, int throttlePercent) {
   display.clearDisplay();
   display.setTextSize(1);
   display.setTextColor(SSD1306_WHITE);
@@ -213,15 +207,14 @@ void displayInfo(PackedDataReceive &data, int throttlePercent) {
   // Line 1: Battery
   float receiverVoltage = map(data.voltage, 0, 255, 0, 4700) / 1000.0f;
   float transmitterVoltage = map(analogRead(VOLTAGE_SENSOR_PIN), 0, 1023, 0, 4700) / 1000.0f;
-  
 
-
-  // 0v = null => default to 50%
-  if (receiverVoltage == 0.0) {
-    receiverVoltage = 4.2 - ((4.2 - 2.8) / 2.0);
+  // Default to mid-range battery voltage if no reading (3.5V)
+  const float DEFAULT_VOLTAGE = 3.5f;
+  if (receiverVoltage == 0.0f) {
+    receiverVoltage = DEFAULT_VOLTAGE;
   }
-  if (transmitterVoltage == 0.0) {
-    transmitterVoltage = 4.2 - ((4.2 - 2.8) / 2.0);
+  if (transmitterVoltage == 0.0f) {
+    transmitterVoltage = DEFAULT_VOLTAGE;
   }
 
 
@@ -237,7 +230,7 @@ void displayInfo(PackedDataReceive &data, int throttlePercent) {
   display.print('T');
   drawBattery(transmitterVoltage, 75, 1, 35);
 
-  // Line 2: RF Quality
+  // Line 2: RF Quality with signal bars and percentage
   display.setCursor(0, 9);
   display.drawBitmap(0, 9, radioIcon, 8, 8, SSD1306_WHITE);
   drawSignal(rfPacketSuccessRate, 12, 16);  
@@ -245,63 +238,64 @@ void displayInfo(PackedDataReceive &data, int throttlePercent) {
   display.print(int(rfPacketSuccessRate * 100));
   display.print("%");
 
-  // Line 3: Throttle
+  // Line 3: Throttle indicator bar
   drawThrottle(throttlePercent, 0, 18);
-
-  // Line 4: Packet success bar (optional, can merge with RF)
 
   display.display();
 }
 
 
-void drawThrottle(int throttlePercent, int barX, int barY)
-{
-  int barH = 8;  // height of bar
-  int barW = 52; // total width of bar
+void drawThrottle(int throttlePercent, int barX, int barY) {
+  const int barH = 8;  // height of bar
+  const int barW = 52; // total width of bar
+  const int offsetX = 40; // text prefix width
 
-  display.setCursor(0, barY);
+  display.setCursor(barX, barY);
   display.print("Thrott");
-  int offsetX = 40; // this inclused the text prefix above
 
   // Draw outline
   display.drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
 
   // Fill proportional to throttlePercent
-  int fillW = map(throttlePercent, 0, 100, 0, barW - 2); // -2 so it stays inside border
-  display.fillRect(barX + offsetX, barY + 1, fillW, barH - 2, SSD1306_WHITE);
-  display.setCursor(offsetX +  barW + 2, barY);
+  int fillW = map(constrain(throttlePercent, 0, 100), 0, 100, 0, barW - 2);
+  display.fillRect(barX + offsetX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+  
+  display.setCursor(offsetX + barW + 2, barY);
   display.print(throttlePercent);
   display.print('%');
 }
 
 void drawBattery(float voltage, int barX, int barY, int barW) {
-  int barH = 6;
+  const int barH = 6;
+  const int MIN_VOLTAGE = 280; // 2.8V * 100
+  const int MAX_VOLTAGE = 420; // 4.2V * 100
 
-  // Example: map 3.0–4.2V to bar range
-  int fillW = map(int(voltage * 100), 280, 420, 0, barW - 2);
-  fillW = constrain(fillW, 0, barW - 2);
+  // Map voltage to bar fill width with proper bounds checking
+  int fillW = map(constrain(int(voltage * 100), MIN_VOLTAGE, MAX_VOLTAGE), 
+                  MIN_VOLTAGE, MAX_VOLTAGE, 0, barW - 2);
 
   display.drawRect(barX, barY, barW, barH, SSD1306_WHITE);
   display.fillRect(barX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
 }
 
 void drawSignal(float successRate, int baseX, int baseY) {
-  int maxBars = 8;
-  int bars = map(int(successRate * 100), 0, 100, 0, maxBars); // how many filled
-  int barW = 2;       // narrower since we have 10
-  int spacing = 1;    // 1px between bars
-  int maxHeight = 8; // tallest bar = 10px
+  const int MAX_BARS = 8;
+  const int BAR_WIDTH = 2;
+  const int BAR_SPACING = 1;
+  const int MAX_HEIGHT = 8;
 
-  for (int i = 0; i < maxBars; i++) {
-    // Scale heights 1 → maxHeight
-    int h = map(i + 1, 1, maxBars, 2, maxHeight);
-    int x = baseX + i * (barW + spacing);
+  int bars = map(constrain(int(successRate * 100), 0, 100), 0, 100, 0, MAX_BARS);
+
+  for (int i = 0; i < MAX_BARS; i++) {
+    // Scale heights progressively from 2 to MAX_HEIGHT
+    int h = map(i + 1, 1, MAX_BARS, 2, MAX_HEIGHT);
+    int x = baseX + i * (BAR_WIDTH + BAR_SPACING);
     int y = baseY - h; // align bottom at baseY
 
     if (i < bars) {
-      display.fillRect(x, y, barW, h, SSD1306_WHITE);
+      display.fillRect(x, y, BAR_WIDTH, h, SSD1306_WHITE);
     } else {
-      display.drawRect(x, y, barW, h, SSD1306_WHITE);
+      display.drawRect(x, y, BAR_WIDTH, h, SSD1306_WHITE);
     }
   }
 }
@@ -315,12 +309,12 @@ void drawPacketSuccess(float successRate, int barX, int barY) {
 
 
 // Simple CRC calculation (XOR-based)
-uint8_t calcCRCTransmit(PackedDataTransmit &data) {
+uint8_t calcCRCTransmit(const PackedDataTransmit &data) {
   return (data.x ^ data.y ^ data.btn) & 0x1F; // Use 5-bit CRC
 }
 
 // Simple CRC calculation (XOR-based)
-uint8_t calcCRCReceive(PackedDataReceive &data) {
+uint8_t calcCRCReceive(const PackedDataReceive &data) {
   return (data.voltage ^ data.mode ^ data.state) & 0x1F; // Use 5-bit CRC
 }
 
@@ -366,7 +360,7 @@ float calculatePacketSuccessRate() {
 }
 
 void scanI2C() {
-  byte error, address;
+  byte address;
   int devices = 0;
   
   Serial.println("Scanning I2C...");
@@ -375,14 +369,14 @@ void scanI2C() {
     Serial.print(address);
     Wire.beginTransmission(address);
     Serial.print(" Beginning trans... ");
-    error = Wire.endTransmission();
+    byte error = Wire.endTransmission();
     Serial.println(" Ending trans... ");
     if (error == 0) {
       Serial.print("I2C device found at address 0x");
       if (address < 16) Serial.print("0");
       Serial.println(address, HEX);
-      return; // assume 1 connection only ( remove if multiple devices)
       devices++;
+      return; // assume 1 connection only ( remove if multiple devices)
     }
   }
   if (devices == 0) Serial.println("No I2C devices found");
