@@ -81,9 +81,8 @@ struct ManualModeOutputs {
     // ...add more as needed
 };
 
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw);
+JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw = true);
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight);
-long map(float steppedRatioLR);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);
 ManualModeOutputs manualModeStep(const ManualModeInputs& in);
