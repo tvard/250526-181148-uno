@@ -1,6 +1,3 @@
-// For compiling with Unity (unit testing framework), you may need to mock or guard hardware-specific includes.
-// Example for Unity compatibility:
-
 // For PlatformIO/Arduino
 #include <Arduino.h>
 #include <Wire.h>
@@ -8,6 +5,18 @@
 #include "helpers.h"
 #include "pitches.h"
 
+// Packed data structure for sending battery voltage, mode, and movement state back to transmitter
+struct PackedDataReceive {
+  uint16_t voltage : 8; // 8 bits for voltage (0-255)
+  uint8_t mode : 2;     // 2 bits for mode (0-3)
+  uint8_t state : 2;    // 2 bits for movement state (0-3)
+  uint8_t crc : 4;      // 4 bits for CRC (0-15)
+};
+
+// Simple CRC calculation (XOR-based)
+uint8_t calcCRCReceive4(const PackedDataReceive &data) {
+  return (data.voltage ^ data.mode ^ data.state) & 0x0F; // Use 4-bit CRC
+}
 // Pin Definitions
 const int RIGHT_MOTOR_IN1 = 2;
 const int RIGHT_MOTOR_IN2 = 3;
@@ -24,7 +33,8 @@ const int ULTRASONIC_ECHO = 13;
 // NRF24L01 Pin Definitions
 const int NRF_CE_PIN = A0;   // CE pin
 const int NRF_CSN_PIN = 10;  // CSN pin
-const int NRF_IRQ_PIN = A1;  // IRQ pin (optional)
+// const int NRF_IRQ_PIN = ??;  // IRQ pin (optional)
+const int VOLTAGE_ADC_PIN = A1; // Analog voltage sensing pin
 
 // Initialize the NRF24L01 driver
 RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
@@ -44,6 +54,7 @@ struct JoystickData
   uint8_t checksum; // Simple checksum for data integrity
 };
 
+
 // Control variables
 bool autoMode = false;            // Start in manual mode
 unsigned long lastModeChange = 0; // Debounce button
@@ -55,6 +66,9 @@ bool buzzerEnabled = false;
 int joystickX = 512; // Center position (range: 0-1023)
 int joystickY = 512; // Center position (range: 0-1023)
 bool joystickButton = false;
+
+// Motor speed variables (global for access in loop)
+int leftSpeed = 0, rightSpeed = 0;
 
 float ax, ay, az;
 float gx, gy, gz;
@@ -71,7 +85,7 @@ uint8_t calculateChecksum(const JoystickData& data);
 
 String pad5(int val);
 String pad5f(float val);
-static int slewRateLimit(int current, int target);
+int slewRateLimit(int current, int target);
 
 struct EntertainerState {
     int noteIndex = 0;
@@ -248,13 +262,40 @@ void setup()
 void loop()
 {
   manualMode(); // This will be called inside the if/else for autoMode
+
+  // Read battery voltage from VOLTAGE_ADC_PIN
+  int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
+  // Map to 0-255 (assuming 0-5V, scale to 0-255 for 8 bits)
+  uint8_t voltage8bit = map(voltageRaw, 0, 1023, 0, 255);
+
+  // Determine mode and movement state (stubbed, replace with actual logic)
+  uint8_t mode = autoMode ? 1 : 0; // 0 = manual, 1 = auto
+  uint8_t state = 0; // 0 = stopped, 1 = forward, 2 = backward, 3 = turning (stub)
+  if (leftSpeed > 0 && rightSpeed > 0) state = 1;
+  else if (leftSpeed < 0 && rightSpeed < 0) state = 2;
+  else if (leftSpeed != rightSpeed) state = 3;
+
+  // Pack and send data to transmitter
+  PackedDataReceive txData;
+  txData.voltage = voltage8bit;
+  txData.mode = mode;
+  txData.state = state;
+  txData.crc = calcCRCReceive4(txData);
+
+  // Send via NRF24L01 (open writing pipe, send, then resume listening)
+  radio.stopListening();
+  const byte address[6] = "00001";
+  radio.openWritingPipe(address);
+  radio.write(&txData, sizeof(PackedDataReceive));
+  radio.startListening();
+
   delay(LOOP_DELAY_MS);
 }
 
 
 void manualMode()
 {
-  static int leftSpeed = 0, rightSpeed = 0, prevLeftSpeed = 0, prevRightSpeed = 0;
+  static int prevLeftSpeed = 0, prevRightSpeed = 0;
   static int rfLostCounter = 0;
   static bool brakingApplied = false;
 
@@ -683,6 +724,7 @@ void endNRF()
   | SCK          | D13              | SPI clock                                                             |
   | MOSI         | D11              | SPI data out                                                          |
   | MISO         | D12              | SPI data in                                                           |
-  | IRQ          | A1 (optional)    | Only if you use interrupts; else leave NC                             |
+  | IRQ          | (optional)       | Only if you use interrupts; else leave NC                             |
 
+  | Voltage Divider Output | A1      | Analog voltage sensing input                                          |
 */

@@ -1,21 +1,27 @@
 // pro16MHzatmega328 pinout: https://protosupplies.com/wp-content/uploads/2020/10/Pro-Mini-Board-Pinout.jpg
-
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SPI.h>
 #include <RF24.h>   // Include the RF24 library for NRF24L01
 
+/*
+TODO:
+Remove Voltage divider or reduce ratio
+Connect Joystick
+Correct wiring for NRF24L01, CE A0 => D9 [DONE]
+*/
+
 // Pin definitions - fixed conflicts
 #define JOY_X_PIN A0      // Joystick X-axis (primary use of A0)
-#define JOY_Y_PIN A1      // Joystick Y-axis 
-#define VOLTAGE_SENSOR_PIN A2 // Battery voltage sensor (moved to A2)
-#define JOY_BUTTON_PIN 16  // Joystick button 
+#define JOY_Y_PIN A1      // Joystick Y-axis
+#define JOY_BUTTON_PIN A2 // Joystick button
+#define VOLTAGE_SENSOR_PIN A3 // Battery voltage sensor (moved to A3)
 
 #define NRF_CE_PIN 9      // NRF CE pin (moved to D9)
 #define NRF_CSN_PIN 10    // NRF CSN pin
-#define NRF_SCK_PIN 13    // SPI SCK
 #define NRF_MOSI_PIN 11   // SPI MOSI
 #define NRF_MISO_PIN 12   // SPI MISO
+#define NRF_SCK_PIN 13    // SPI SCK
 
 #define SCREEN_ADDRESS 0x3C ///< See datasheet for Address; 0x3D for 128x64, 0x3C for 128x32
 #define OLED_RESET_PIN   -1   // Reset pin (or -1 if sharing Arduino reset pin) 
@@ -101,6 +107,8 @@ void setup() {
   Serial.println("Initializing...");
 
   pinMode(JOY_BUTTON_PIN, INPUT_PULLUP);
+
+
 
   Wire.begin(); 
 
@@ -205,11 +213,13 @@ void displayInfo(const PackedDataReceive &data, int throttlePercent) {
   display.setTextColor(SSD1306_WHITE);
 
   // Line 1: Battery
-  float receiverVoltage = map(data.voltage, 0, 255, 0, 4700) / 1000.0f;
-  float transmitterVoltage = map(analogRead(VOLTAGE_SENSOR_PIN), 0, 1023, 0, 4700) / 1000.0f;
+  // Receiver voltage: 0-255 maps to 0-5V (assuming receiver uses DEFAULT reference)
+  float receiverVoltage = map(data.voltage, 0, 255, 0, 5000) / 1000.0f;
+  // Transmitter voltage: analogRead with DEFAULT reference (5V)
+  float transmitterVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f;
 
   // Default to mid-range battery voltage if no reading (3.5V)
-  const float DEFAULT_VOLTAGE = 3.5f;
+  const float DEFAULT_VOLTAGE = 0.0f;
   if (receiverVoltage == 0.0f) {
     receiverVoltage = DEFAULT_VOLTAGE;
   }
