@@ -31,8 +31,8 @@ const int ULTRASONIC_TRIG = 12;
 const int ULTRASONIC_ECHO = 13;
 
 // NRF24L01 Pin Definitions
-const int NRF_CE_PIN = A0;   // CE pin
-const int NRF_CSN_PIN = 10;  // CSN pin
+const int NRF_CE_PIN = 10;   // CE pin
+const int NRF_CSN_PIN = A0;  // CSN pin
 // const int NRF_IRQ_PIN = ??;  // IRQ pin (optional)
 const int VOLTAGE_ADC_PIN = A1; // Analog voltage sensing pin
 
@@ -42,8 +42,6 @@ RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
 // Radio configuration
 const byte addresses[][6] = {"00001", "00002"}; // 5-byte addresses for bidirectional communication
 const int RADIO_CHANNEL = 76; // Channel 0-125 (2.4GHz + channel MHz)
-const rf24_datarate_e DATA_RATE = RF24_250KBPS; // RF24_250KBPS, RF24_1MBPS, or RF24_2MBPS
-const rf24_pa_dbm_e POWER_LEVEL = RF24_PA_HIGH; // RF24_PA_MIN, RF24_PA_LOW, RF24_PA_HIGH, RF24_PA_MAX
 
 // Structure for joystick data - MUST MATCH THE TRANSMITTER EXACTLY
 struct JoystickData
@@ -189,10 +187,9 @@ void setup()
     
     // Configure the radio
     radio.setChannel(RADIO_CHANNEL);
-    radio.setDataRate(DATA_RATE);
-    radio.setPALevel(POWER_LEVEL);
+    radio.setDataRate(RF24_250KBPS);
+    radio.setPALevel(RF24_PA_HIGH);
     radio.setPayloadSize(sizeof(JoystickData));
-    
     // Enable auto-acknowledgment for reliability
     radio.setAutoAck(true);
     radio.enableAckPayload();
@@ -207,17 +204,19 @@ void setup()
     // Print configuration details
     Serial.print("Channel: "); Serial.println(RADIO_CHANNEL);
     Serial.print("Data Rate: ");
-    switch(DATA_RATE) {
+    switch (radio.getDataRate()) {
       case RF24_250KBPS: Serial.println("250KBPS"); break;
       case RF24_1MBPS: Serial.println("1MBPS"); break;
       case RF24_2MBPS: Serial.println("2MBPS"); break;
+      default: Serial.println("UNKNOWN"); break;
     }
     Serial.print("Power Level: ");
-    switch(POWER_LEVEL) {
+    switch (radio.getPALevel()) {
       case RF24_PA_MIN: Serial.println("MIN"); break;
       case RF24_PA_LOW: Serial.println("LOW"); break;
       case RF24_PA_HIGH: Serial.println("HIGH"); break;
       case RF24_PA_MAX: Serial.println("MAX"); break;
+      default: Serial.println("UNKNOWN"); break;
     }
     
     // Success beeps
@@ -370,20 +369,20 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
   }
 
   Serial.print(" Q LR: ");
-  Serial.print(pad5f(js.steppedRatioLR)); // stepped ratio
+  Serial.print(js.steppedRatioLR > 0 ? pad5f(js.steppedRatioLR) : "0");
   Serial.print(" (");
-  Serial.print(pad5f(js.rawRatioLR));
+  Serial.print(js.rawRatioLR > 0 ? pad5f(js.rawRatioLR) : "0");
   Serial.print(")");
 
   Serial.print(" Targ Spd: ");
-  Serial.print(pad5(out.outputLeft));
+  Serial.print(out.outputLeft > 0 ? pad5(out.outputLeft) : "0");
   Serial.print(" ");
-  Serial.print(pad5(out.outputRight));
+  Serial.print(out.outputRight > 0 ? pad5(out.outputRight) : "0");
 
   Serial.print(" Curr Spd: ");
-  Serial.print(pad5(leftSpeed));
+  Serial.print(leftSpeed > 0 ? pad5(leftSpeed) : "0");
   Serial.print(" | ");
-  Serial.print(pad5(rightSpeed));
+  Serial.print(rightSpeed > 0 ? pad5(rightSpeed) : "0");
 
   Serial.print(" Slew: ");
   Serial.print(!out.skipSlewRate ? "Y" : "N");
@@ -392,9 +391,25 @@ void manualModeSerialPrint(int leftSpeed, int rightSpeed, JoystickProcessingResu
   Serial.print(brakingApplied ? "Y" : "N");
 
   Serial.print(" XY: ");
-  Serial.print(pad5(js.correctedX));
+  Serial.print(js.correctedX > 0 ? pad5(js.correctedX) : "0");
   Serial.print(" | ");
-  Serial.print(pad5(js.correctedY));
+  Serial.print(js.correctedY > 0 ? pad5(js.correctedY) : "0");
+
+  // RF communication status
+  Serial.print(" | RF: ");
+  if (radio.isChipConnected()) {
+    Serial.print("NRF OK");
+  } else {
+    Serial.print("NRF FAIL");
+  }
+
+  // Show last sent packet info
+  Serial.print(" | TX: V=");
+  Serial.print(leftSpeed);
+  Serial.print(", ");
+  Serial.print(rightSpeed);
+  Serial.print(" | Mode: ");
+  Serial.print(autoMode ? "AUTO" : "MAN");
 }
 
 // Calculate checksum for data integrity
