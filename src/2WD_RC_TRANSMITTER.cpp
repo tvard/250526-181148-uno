@@ -176,8 +176,9 @@ void initRadio() {
     radio->setDataRate(RF24_250KBPS);
     radio->setPALevel(RF24_PA_HIGH);
     radio->setPayloadSize(sizeof(JoystickData));
-    radio->setAutoAck(true);
-    radio->setRetries(5, 5); // Reduced retries
+    radio->setAutoAck(true);                // Re-enable ACK
+    radio->enableAckPayload();              // Enable ACK payloads
+    radio->setRetries(5, 5);                // Restore retries
     radio->openWritingPipe(addresses[0]);    // Write on address "00001"
     radio->openReadingPipe(0, addresses[1]); // Listen on address "00002"
     radio->startListening();
@@ -208,7 +209,7 @@ void loop() {
     radio->stopListening();
     bool success = radio->write(&txData, sizeof(JoystickData));
     radio->startListening();
-    updatePacketHistory(success);
+    updatePacketHistory(success);  // Use actual success status
   }
   
   // Update display occasionally to save processing
