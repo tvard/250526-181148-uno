@@ -26,15 +26,15 @@ const int LEFT_MOTOR_IN2 = 7;
 const int LEFT_MOTOR_EN = 6;
 
 const int BUZZER_PIN = 8;
-const int MODE_BUTTON_PIN = 6;
+// const int MODE_BUTTON_PIN = 6;
 const int ULTRASONIC_TRIG = 12;
 const int ULTRASONIC_ECHO = 13;
 
 // NRF24L01 Pin Definitions
-const int NRF_CE_PIN = 10;   // CE pin
-const int NRF_CSN_PIN = A0;  // CSN pin
+const int NRF_CE_PIN = 10;   // CE pin  
+const int NRF_CSN_PIN = A0;   // CSN pin (changed from A0 to D9)
 // const int NRF_IRQ_PIN = ??;  // IRQ pin (optional)
-const int VOLTAGE_ADC_PIN = A1; // Analog voltage sensing pin
+const int VOLTAGE_ADC_PIN = A2; // Analog voltage sensing pin
 
 // Initialize the NRF24L01 driver
 RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
@@ -191,14 +191,15 @@ void setup()
     radio.setPALevel(RF24_PA_HIGH);
     radio.setPayloadSize(sizeof(JoystickData));
     // Enable auto-acknowledgment for reliability
-    radio.setAutoAck(true);
-    radio.enableAckPayload();
+    radio.setAutoAck(true);              // Re-enable ACK
+    radio.enableAckPayload();            // Re-enable ACK payloads
     
-    // Set retry parameters (15 retries, 1500µs delay)
-    radio.setRetries(15, 15);
+    // Set retry parameters (5 retries, 1500µs delay) - match transmitter
+    radio.setRetries(5, 5);              // Restore retries
     
-    // Open reading pipe (receiver)
-    radio.openReadingPipe(0, addresses[1]);  // Listen on address "00002"
+    // Open reading pipe (receiver) - listen on address "00001" 
+    radio.openReadingPipe(0, addresses[0]);  // Listen on address "00001"
+    radio.openWritingPipe(addresses[1]);     // Write responses on "00002"
     radio.startListening();
     
     // Print configuration details
@@ -236,8 +237,8 @@ void setup()
   pinMode(ULTRASONIC_TRIG, OUTPUT);
   pinMode(ULTRASONIC_ECHO, INPUT);
 
-  // Initialize mode toggle button with internal pullup
-  pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
+  // // Initialize mode toggle button with internal pullup
+  // pinMode(MODE_BUTTON_PIN, INPUT_PULLUP);
 
   // Initialize buzzer
   pinMode(BUZZER_PIN, OUTPUT);
@@ -283,10 +284,20 @@ void loop()
 
   // Send via NRF24L01 (open writing pipe, send, then resume listening)
   radio.stopListening();
-  const byte address[6] = "00001";
-  radio.openWritingPipe(address);
-  radio.write(&txData, sizeof(PackedDataReceive));
+  bool success = radio.write(&txData, sizeof(PackedDataReceive));
   radio.startListening();
+  
+  // Optional: print status for debugging
+  static unsigned long lastStatusPrint = 0;
+  if (millis() - lastStatusPrint > 1000) { // Every second
+    Serial.print("TX to transmitter: ");
+    Serial.print(success ? "OK" : "FAIL");
+    Serial.print(" | Battery: ");
+    Serial.print(voltage8bit);
+    Serial.print(" | Mode: ");
+    Serial.println(autoMode ? "AUTO" : "MANUAL");
+    lastStatusPrint = millis();
+  }
 
   delay(LOOP_DELAY_MS);
 }
@@ -431,6 +442,7 @@ bool readRFSignals()
 {
   static unsigned long lastReceiveTime = 0;
   static int consecutiveFailures = 0;
+  static unsigned long lastDebugPrint = 0;
   
   if (radio.available()) {
     JoystickData receivedData;
@@ -449,6 +461,17 @@ bool readRFSignals()
       lastReceiveTime = millis();
       consecutiveFailures = 0;
       
+      // Debug print every 100 valid packets
+      static int validPacketCount = 0;
+      if (++validPacketCount % 100 == 0) {
+        Serial.print("RX: X=");
+        Serial.print(joystickX);
+        Serial.print(" Y=");
+        Serial.print(joystickY);
+        Serial.print(" Btn=");
+        Serial.println(joystickButton ? "ON" : "OFF");
+      }
+      
       return true;
     } else {
       // Checksum mismatch - corrupted data
@@ -458,6 +481,19 @@ bool readRFSignals()
       Serial.println(receivedData.checksum);
       consecutiveFailures++;
     }
+  }
+  
+  // Print radio status occasionally
+  if (millis() - lastDebugPrint > 5000) { // Every 5 seconds
+    Serial.print("Radio status: ");
+    if (radio.isChipConnected()) {
+      Serial.print("Connected");
+    } else {
+      Serial.print("DISCONNECTED");
+    }
+    Serial.print(" | Available: ");
+    Serial.println(radio.available() ? "YES" : "NO");
+    lastDebugPrint = millis();
   }
   
   // Check for communication timeout
