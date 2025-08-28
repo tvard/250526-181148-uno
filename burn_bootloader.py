@@ -19,7 +19,8 @@ def burn_fuses_and_bootloader(source, target, env):
     print("Using upload port: " + upload_port)
 
     # All env.Execute() calls now use the resolved upload_port
-    env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U lfuse:w:0xFF:m -U hfuse:w:0xDA:m -U efuse:w:0x05:m")
+    # 3.3V/8MHz fuse settings for internal 8MHz oscillator
+    env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U lfuse:w:0xE2:m -U hfuse:w:0xDA:m -U efuse:w:0x05:m")
     env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U flash:w:" + env.subst("$PROJECT_PACKAGES_DIR/framework-arduino-avr/bootloaders/optiboot/optiboot_atmega328.hex") + ":i")
     env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U lock:w:0x0F:m")
 
