@@ -17,12 +17,27 @@ def burn_fuses_and_bootloader(source, target, env):
         env.Exit(1)
 
     print("Using upload port: " + upload_port)
-
-    # All env.Execute() calls now use the resolved upload_port
+    
+    # Get avrdude path and config from PlatformIO environment
+    avrdude_path = env.subst("$PROJECT_PACKAGES_DIR/tool-avrdude/avrdude")
+    avrdude_conf = env.subst("$PROJECT_PACKAGES_DIR/tool-avrdude/avrdude.conf")
+    bootloader_hex = env.subst("$PROJECT_PACKAGES_DIR/framework-arduino-avr/bootloaders/optiboot/optiboot_atmega328.hex")
+    
+    print("Burning 3.3V/8MHz fuses...")
     # 3.3V/8MHz fuse settings for internal 8MHz oscillator
-    env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U lfuse:w:0xE2:m -U hfuse:w:0xDA:m -U efuse:w:0x05:m")
-    env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U flash:w:" + env.subst("$PROJECT_PACKAGES_DIR/framework-arduino-avr/bootloaders/optiboot/optiboot_atmega328.hex") + ":i")
-    env.Execute("avrdude -C/etc/avrdude.conf -c stk500v1 -p m328p -P " + upload_port + " -b 19200 -U lock:w:0x0F:m")
+    env.Execute(f'"{avrdude_path}" -C"{avrdude_conf}" -c stk500v1 -p m328p -P {upload_port} -b 19200 -U lfuse:w:0xE2:m -U hfuse:w:0xDA:m -U efuse:w:0x05:m')
+    
+    print("Burning bootloader...")
+    env.Execute(f'"{avrdude_path}" -C"{avrdude_conf}" -c stk500v1 -p m328p -P {upload_port} -b 19200 -U flash:w:"{bootloader_hex}":i')
+    
+    print("Setting lock bits...")
+    env.Execute(f'"{avrdude_path}" -C"{avrdude_conf}" -c stk500v1 -p m328p -P {upload_port} -b 19200 -U lock:w:0x0F:m')
+    
+    print("3.3V/8MHz bootloader and fuses successfully burned!")
+    print("Bootloader burning complete. Exiting to prevent firmware upload.")
+    
+    # Exit successfully to prevent PlatformIO from continuing with upload
+    env.Exit(0)
 
 # Register the custom target
 env.AddCustomTarget(

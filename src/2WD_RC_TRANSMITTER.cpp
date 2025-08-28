@@ -223,7 +223,7 @@ void loop() {
   // Periodic memory report
   static uint32_t lastMemReport = 0;
   if (millis() - lastMemReport > 5000) {
-    Serial.print("Free memory: ");  Serial.print(freeMemory());
+    Serial.print("Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
     // NRF signal report
     Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
     Serial.print("Packet Index: "); Serial.print(packetIndex); Serial.print(" | ");

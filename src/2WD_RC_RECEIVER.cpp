@@ -60,6 +60,11 @@ unsigned long lastDistanceCheck = 0;
 int lastButtonState = HIGH; // Previous state of button
 bool buzzerEnabled = false;
 
+// Minimal packet history (reduced from 100 to 10)
+const int PACKET_HISTORY_SIZE = 10;
+uint16_t packetHistory = 0; // Use bitfield instead of array
+uint8_t packetIndex = 0;
+
 // RF Signal variables (these will be updated directly from received JoystickData)
 int joystickX = 512; // Center position (range: 0-1023)
 int joystickY = 512; // Center position (range: 0-1023)
@@ -80,6 +85,8 @@ void beep(int duration);
 void beep(bool isActive);
 bool readRFSignals();
 uint8_t calculateChecksum(const JoystickData& data);
+int freeMemory();
+float getSuccessRate();
 
 String pad5(int val);
 String pad5f(float val);
@@ -297,7 +304,13 @@ void loop()
     Serial.print(" | Mode: ");
     Serial.println(autoMode ? "AUTO" : "MANUAL");
     lastStatusPrint = millis();
+    Serial.print("Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
+    // NRF signal report
+    Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
+    Serial.print("Packet Index: "); Serial.print(packetIndex); Serial.print(" | ");
+    Serial.print("Success Rate: "); Serial.println(getSuccessRate() * 100);
   }
+
 
   delay(LOOP_DELAY_MS);
 }
@@ -332,8 +345,9 @@ void manualMode()
     // Buzzer
     beep(out.buzzerOn);
 
-    manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
-    Serial.println();
+    // uncomment for debugging movement
+    // manualModeSerialPrint(leftSpeed, rightSpeed, js, out, brakingApplied);
+    // Serial.println();
   }
   else if (rfLostCounter++ * LOOP_DELAY_MS > 440) // RF-lost ramp-down to avoid judder, signal considered lost after ~0.5s
   {
@@ -761,6 +775,22 @@ void endNRF()
 {
   radio.stopListening();
   radio.powerDown();
+}
+
+// Free memory utility
+int freeMemory() {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
+}
+
+
+float getSuccessRate() {
+  int count = 0;
+  for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
+    if (packetHistory & (1 << i)) count++;
+  }
+  return (float)count / PACKET_HISTORY_SIZE;
 }
 
 /*
