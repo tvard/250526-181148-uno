@@ -3,6 +3,7 @@
 #include <Adafruit_SSD1306.h>
 #include <SPI.h>
 #include <RF24.h>
+#include <helpers.h>
 
 // Pin definitions
 #define JOY_X_PIN A0
@@ -17,7 +18,6 @@
 #define SCREEN_ADDRESS 0x3C
 #define OLED_RESET_PIN -1
 
-const int LOOP_DELAY_MS = 10; // Increased to reduce processing overhead
 const int RADIO_CHANNEL = 76;
 const byte addresses[][6] = {"00001", "00002"};
 
@@ -30,33 +30,10 @@ struct JoystickData {
 };
 
 struct __attribute__((packed)) RxData {
-  uint8_t voltage;
-  uint8_t status; // Combined mode + state
-  uint8_t crc;
-};
-
-// 8x8 battery icon
-const uint8_t batteryIcon[] PROGMEM = {
-  0b01111110, // ###### 
-  0b11111111, // ########
-  0b10011001, // #  ##  #
-  0b10011001, // #  ##  #
-  0b10011001, // #  ##  #
-  0b10011001, // #  ##  #
-  0b11111111, // ########
-  0b01111110  //  ######
-};
-
-// 8x8 radio signal icon
-const uint8_t radioIcon[] PROGMEM = {
-  0b00011000, //    ##
-  0b00111100, //   ####
-  0b01111110, //  ######
-  0b11111111, // ########
-  0b01111110, //  ######
-  0b00111100, //   ####
-  0b00011000, //    ##
-  0b00000000  //        
+  uint8_t voltage;        // Battery voltage (0-255)
+  uint8_t successRate;    // Rx success rate (0-255)
+  uint8_t status;         // Combined mode + state info
+  uint8_t crc;            // Simple CRC
 };
 
 // Global objects - delay initialization to save startup RAM
@@ -79,10 +56,11 @@ void initRadio();
 uint8_t calculateChecksum(const JoystickData& data);
 void updatePacketHistory(bool success);
 float getSuccessRate();
-void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float batteryVoltage);
-void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage);
-void drawSignal(float successRate, int baseX, int baseY);
-void drawThrottle(int throttlePercent, int barX, int barY);
+void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate);
+void drawRssi(float successRate, int barX, int barY, bool showLabel, const char* suffix, int offsetX);
+void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, bool showLabel, const char* suffix, int offsetX);
+void drawThrottle(int throttlePercent, int barX, int barY, int offsetX);
+void drawLeftRightBar(int leftRightPercent, int barX, int barY, int offsetX);
 
 // Free memory utility
 int freeMemory() {
@@ -197,8 +175,12 @@ void loop() {
   
   uint16_t x = constrain(rawX, 0, 1023);
   uint16_t y = constrain(rawY, 0, 1023);
-  
-  // Send data if radio available
+
+  static float rxVoltage = 0.0f;
+  static float rxSuccessRate = 0.0f;
+  static uint32_t lastAckTime = 0;
+
+  // Send data continuously if radio is available
   if (radio) {
     JoystickData txData;
     txData.xValue = x;
@@ -208,15 +190,48 @@ void loop() {
     
     radio->stopListening();
     bool success = radio->write(&txData, sizeof(JoystickData));
+    
+    // Check for ACK payload from receiver
+    if (success && radio->isAckPayloadAvailable()) {
+      RxData ackData;
+      radio->read(&ackData, sizeof(RxData));
+      
+      // Validate CRC of received ACK payload
+      uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
+      if (ackData.crc == expectedCrc) {
+        // Process valid receiver data
+        rxVoltage = map(ackData.voltage, 0, 255, 0, 1260) / 100.0f; // Convert back to voltage
+        rxSuccessRate = (float)ackData.successRate / 255.0f;        // Scale back to 0-1 (fraction)
+
+        Serial.print("RX Voltage: ");
+        Serial.print(rxVoltage);
+        Serial.print(" | RX Success Rate: ");
+        Serial.println(rxSuccessRate);
+
+        uint8_t receiverMode = (ackData.status >> 2) & 0x03;
+        uint8_t receiverState = ackData.status & 0x03;
+        
+        lastAckTime = millis(); // Update timestamp when we receive valid ACK
+      }
+    }
+    
     radio->startListening();
-    updatePacketHistory(success);  // Use actual success status
+    updatePacketHistory(success);
+  }
+  
+  // Check for timeout - reset RX values if no ACK received for 2 seconds
+  if (lastAckTime > 0 && millis() - lastAckTime > 2000) {
+    rxVoltage = 0.0f;
+    rxSuccessRate = 0.0f;
+    Serial.println("RX data timeout - resetting values");
   }
   
   // Update display occasionally to save processing
   static uint32_t lastDisplay = 0;
   if (displayReady && millis() - lastDisplay > 200) { // 5Hz update
-    float batteryVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f + 0.04f;
-    displayInfo(x, y, btnPressed, batteryVoltage);
+    float txVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f + 0.04f;
+    float txSuccessRate = getSuccessRate();
+    displayInfo(x, y, btnPressed, txVoltage, rxVoltage, txSuccessRate, rxSuccessRate);
     lastDisplay = millis();
   }
   
@@ -260,59 +275,72 @@ float getSuccessRate() {
   for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
     if (packetHistory & (1 << i)) count++;
   }
-  return (float)count / PACKET_HISTORY_SIZE;
+  return (float)count / PACKET_HISTORY_SIZE; // Success rate as a fraction
 }
 
-void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float batteryVoltage) {
+void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate) {
   display->clearDisplay();
   display->setTextSize(1);
   display->setTextColor(SSD1306_WHITE);
 
-  // Line 1: Battery indicators
-  // Transmitter battery
-  display->drawBitmap(0, 0, batteryIcon, 8, 8, SSD1306_WHITE);
-  display->setCursor(9, 0);
-  display->print('T');
-  drawBattery(batteryVoltage, 15, 1, 35, 4.2f); 
+  const int offsetX = 30; // Text prefix width
 
-  // Receiver battery placeholder (would come from RxData in full version)
-  display->drawBitmap(60, 0, batteryIcon, 8, 8, SSD1306_WHITE);
-  display->setCursor(69, 0);
-  display->print('R');
-  drawBattery(3.7f, 75, 1, 35, 12.6f); // Placeholder voltage
+  // Line 1: Battery indicators
+  drawBattery(txVoltage, 0, 1, 28, 4.2f, true, "tx", offsetX);   // Transmitter battery
+  drawBattery(rxVoltage, 75, 1, 28, 12.6f, false, "rx", 0);      // Receiver battery - same size, closer label
 
   // Line 2: RF Quality with signal bars and percentage
-  display->setCursor(0, 9);
-  display->drawBitmap(0, 9, radioIcon, 8, 8, SSD1306_WHITE);
-  drawSignal(getSuccessRate(), 12, 16);  
-  display->setCursor(100, 9);
-  display->print(int(getSuccessRate() * 100));
-  display->print("%");
+  drawRssi(txSuccessRate, 0, 10, true, "tx", offsetX);
+  drawRssi(rxSuccessRate, 75, 10, false, "rx", 0);
 
   // Line 3: Throttle indicator bar
   int throttlePercent = map(y, 0, 1023, 0, 100);
-  drawThrottle(throttlePercent, 0, 18);
+  drawThrottle(throttlePercent, 0, 18, offsetX);
 
-  // Line 4: Joystick values and button status
-  display->setCursor(0, 26);
-  display->print("X:");
-  display->print(x);
-  display->print(" Y:");
-  display->print(y);
-  if (btnPressed) {
-    display->print(" BTN");
-  }
+  // Line 5: Left/Right percent (ratio) with fillbar
+  int leftRightPercent = map(x, 0, 1023, -100, 100); // -100 = full left, 0 = center, 100 = full right
+  drawLeftRightBar(leftRightPercent, 0, 26, offsetX);
 
   display->display();
 }
 
-void drawThrottle(int throttlePercent, int barX, int barY) {
+void drawRssi(float rssi, int barX, int barY, bool showLabel, const char* suffix, int offsetX)
+{
+  if (showLabel) {
+    display->setCursor(barX, barY);
+    display->print("RSSI");
+  }
+
+  const int MAX_BARS = 6;
+  const int BAR_WIDTH = 2;
+  const int BAR_SPACING = 1;
+  const int MAX_HEIGHT = 7;
+
+  int bars = map(constrain(int(rssi * 100), 0, 100), 0, 100, 0, MAX_BARS);
+  
+  // Always show outline bars, but fill only the active ones
+  for (int i = 0; i < MAX_BARS; i++) {
+    // Scale heights progressively from 2 to MAX_HEIGHT
+    int h = map(i + 1, 1, MAX_BARS, 2, MAX_HEIGHT);
+    int barPosX = barX + offsetX + i * (BAR_WIDTH + BAR_SPACING);
+    int barPosY = barY + 6 - h; // align bottom at barY
+
+      // Filled bars for active signal strength
+    display->fillRect(barPosX, barPosY, BAR_WIDTH, h, i < bars ? SSD1306_WHITE : SSD1306_BLACK);
+    display->drawRect(barPosX, barPosY, BAR_WIDTH, h, i <= bars ? SSD1306_WHITE : SSD1306_BLACK);
+  }
+
+  // Fixed position for percentage text
+  display->setCursor(barX + offsetX + (MAX_BARS * (BAR_WIDTH + BAR_SPACING)) + 2, barY);
+  display->print(suffix);
+}
+
+void drawThrottle(int throttlePercent, int barX, int barY, int offsetX) {
   const int barH = 6;  // height of bar (reduced from 8)
   const int barW = 52; // total width of bar
-  const int offsetX = 40; // text prefix width
 
   display->setCursor(barX, barY);
-  display->print("Thrott");
+  display->print("THR");
 
   // Draw outline
   display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
@@ -326,8 +354,28 @@ void drawThrottle(int throttlePercent, int barX, int barY) {
   display->print('%');
 }
 
-void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage) {
+void drawLeftRightBar(int leftRightPercent, int barX, int barY, int offsetX) {
+  const int barW = 52;    // total width of bar
   const int barH = 6;
+
+  display->setCursor(barX, barY);
+  display->print("L/R");
+
+  // Draw outline
+  display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
+
+  // Map leftRightPercent (-100..100) to fill position (0..barW)
+  int fillPos = map(leftRightPercent, -100, 100, 0, barW);
+  display->fillRect(barX + offsetX + 1, barY + 1, fillPos, barH - 2, SSD1306_WHITE);
+
+  display->setCursor(offsetX + barW + 2, barY);
+  display->print(leftRightPercent);
+  display->print('%');
+}
+
+void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, bool showLabel, const char* suffix, int offsetX) {
+  const int barH = 6;
+
   const int MIN_VOLTAGE = 280; // 2.8V * 100
   int MAX_VOLTAGE = int(maxVoltage * 100); // maxVoltage in V
 
@@ -335,28 +383,16 @@ void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage) 
   int fillW = map(constrain(int(voltage * 100), MIN_VOLTAGE, MAX_VOLTAGE), 
                   MIN_VOLTAGE, MAX_VOLTAGE, 0, barW - 2);
 
-  display->drawRect(barX, barY, barW, barH, SSD1306_WHITE);
-  display->fillRect(barX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
-}
 
-void drawSignal(float successRate, int baseX, int baseY) {
-  const int MAX_BARS = 8;
-  const int BAR_WIDTH = 2;
-  const int BAR_SPACING = 1;
-  const int MAX_HEIGHT = 8;
-
-  int bars = map(constrain(int(successRate * 100), 0, 100), 0, 100, 0, MAX_BARS);
-
-  for (int i = 0; i < MAX_BARS; i++) {
-    // Scale heights progressively from 2 to MAX_HEIGHT
-    int h = map(i + 1, 1, MAX_BARS, 2, MAX_HEIGHT);
-    int x = baseX + i * (BAR_WIDTH + BAR_SPACING);
-    int y = baseY - h; // align bottom at baseY
-
-    if (i < bars) {
-      display->fillRect(x, y, BAR_WIDTH, h, SSD1306_WHITE);
-    } else {
-      display->drawRect(x, y, BAR_WIDTH, h, SSD1306_WHITE);
-    }
+  if (showLabel) {
+    display->setCursor(barX, barY);
+    display->print("BAT");
   }
+
+  display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
+  display->fillRect(barX + offsetX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+
+  display->setCursor(barX + offsetX + (barW + 2), barY);
+  display->print(suffix); // tx, rx...
 }
+

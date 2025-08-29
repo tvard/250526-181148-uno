@@ -20,7 +20,7 @@ const int RAMP_STEP = 30;    // how many speed units we change per loop, less = 
 
 // 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
 //    constaint to MIN_MOTOR_SPEED, maxMotorSpeed and apply ramping
-const int JOYSTICK_DEADZONE = 18;                      // deadzone around center based on joystick variance
+const int JOYSTICK_DEADZONE = 75;                       // deadzone around center based on joystick variance (increased to prevent micro-activation)
 const int FORWARD_THRESHOLD = 512 + JOYSTICK_DEADZONE;  // center = 512, forward = 1023  (center can change with usage)
 const int BACKWARD_THRESHOLD = 512 - JOYSTICK_DEADZONE; // center = 512, backward = 0
 
@@ -30,11 +30,16 @@ int slewRateLimit(int current, int target);
 #ifdef ARDUINO
 String pad5(int val);
 String pad5f(float val);
+String pad3(int val);
+String pad3f(float val);
+String pad3s(int val);
 #else
 #include <string>
 std::string pad5(int val);
 std::string pad5f(float val);
-
+std::string pad3(int val);
+std::string pad3f(float val);
+std::string pad3s(int val);
 #endif
 
 
