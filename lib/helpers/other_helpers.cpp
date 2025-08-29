@@ -15,6 +15,25 @@ String pad5f(float val) {
   dtostrf(val, 5, 2, buf);
   return String(buf);
 }
+
+String pad3(int val) {
+  char buf[4];
+  snprintf(buf, sizeof(buf), "%03d", val);
+  return String(buf);
+}
+
+String pad3f(float val) {
+  char buf[7];
+  dtostrf(val, 5, 2, buf);
+  return String(buf);
+}
+
+String pad3s(int val) {
+  char buf[4];
+  snprintf(buf, sizeof(buf), "%3d", val);
+  return String(buf);
+}
+
 #else
 #include <string>
 
@@ -30,6 +49,23 @@ std::string pad5f(float val) {
   return std::string(buf);
 }
 
+std::string pad3(int val) {
+  char buf[4];
+  snprintf(buf, sizeof(buf), "%03d", val);
+  return std::string(buf);
+}
+
+std::string pad3f(float val) {
+  char buf[7];
+  dtostrf(val, 5, 2, buf);
+  return std::string(buf);
+}
+
+String pad3s(int val) {
+  char buf[4];
+  snprintf(buf, sizeof(buf), "%3d", val);
+  return String(buf);
+}
 
 // class SerialSim {
 // public:
