@@ -57,15 +57,17 @@ std::string pad3(int val) {
 
 std::string pad3f(float val) {
   char buf[7];
-  dtostrf(val, 5, 2, buf);
+  snprintf(buf, sizeof(buf), "%5.2f", val);  // Use snprintf instead of dtostrf for native compilation
   return std::string(buf);
 }
 
+#ifdef ARDUINO
 String pad3s(int val) {
   char buf[4];
   snprintf(buf, sizeof(buf), "%3d", val);
   return String(buf);
 }
+#endif
 
 // class SerialSim {
 // public:

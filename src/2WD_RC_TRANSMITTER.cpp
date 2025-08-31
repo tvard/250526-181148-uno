@@ -6,9 +6,9 @@
 #include <helpers.h>
 
 // Pin definitions
-#define JOY_X_PIN A0
+#define JOY_BUTTON_PIN A0
+#define JOY_X_PIN A2
 #define JOY_Y_PIN A1
-#define JOY_BUTTON_PIN A2
 #define VOLTAGE_SENSOR_PIN A3
 #define NRF_CE_PIN 9
 #define NRF_CSN_PIN 10
@@ -86,6 +86,8 @@ void setup() {
   Serial.println(freeMemory());
   
   initDisplay();
+  display->println("OLED Ready.");
+  display->display();
   
   // Initialize SPI and radio (more memory-hungry)
   SPI.begin();
@@ -105,10 +107,22 @@ void setup() {
   }
   xCalib = 512 - xSum / samples;
   yCalib = 512 - ySum / samples;
-  
+
+  display->println("Calibration Complete");
+  display->print("Final X Calibration: ");
+  display->print((xCalib >= 0) ? "+" : "-");
+  display->println(abs(xCalib));
+  display->print("Final Y Calibration: ");
+  display->print((yCalib >= 0) ? "+" : "-");
+  display->println(abs(yCalib));
+  display->display();
+
   Serial.print("Final free memory: ");
   Serial.println(freeMemory());
   Serial.println("Setup complete!");
+
+  display->print("Setup Complete. Ready To Roll!");
+  display->display();
 }
 
 void initDisplay() {
@@ -127,7 +141,6 @@ void initDisplay() {
       display->setTextSize(1);
       display->setTextColor(SSD1306_WHITE);
       display->setCursor(0, 0);
-      display->println("Optimized RC TX");
       display->display();
     } else {
       Serial.println("Display allocation failed");
@@ -175,6 +188,7 @@ void loop() {
   
   uint16_t x = constrain(rawX, 0, 1023);
   uint16_t y = constrain(rawY, 0, 1023);
+  y = 1023 - y; // Invert Y axis
 
   static float rxVoltage = 0.0f;
   static float rxSuccessRate = 0.0f;
@@ -199,14 +213,10 @@ void loop() {
       // Validate CRC of received ACK payload
       uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
       if (ackData.crc == expectedCrc) {
-        // Process valid receiver data
-        rxVoltage = map(ackData.voltage, 0, 255, 0, 1260) / 100.0f; // Convert back to voltage
+        // Process valid receiver data using shared voltage calibration constants
+        // ackData.voltage is scaled 0-255, convert to actual battery voltage
+        rxVoltage = map(ackData.voltage, 0, 255, 0, (int)(VOLTAGE_CALIBRATION_BATTERY * 100)) / 100.0f;
         rxSuccessRate = (float)ackData.successRate / 255.0f;        // Scale back to 0-1 (fraction)
-
-        Serial.print("RX Voltage: ");
-        Serial.print(rxVoltage);
-        Serial.print(" | RX Success Rate: ");
-        Serial.println(rxSuccessRate);
 
         uint8_t receiverMode = (ackData.status >> 2) & 0x03;
         uint8_t receiverState = ackData.status & 0x03;
@@ -218,12 +228,15 @@ void loop() {
     radio->startListening();
     updatePacketHistory(success);
   }
-  
-  // Check for timeout - reset RX values if no ACK received for 2 seconds
-  if (lastAckTime > 0 && millis() - lastAckTime > 2000) {
+
+  // Check for timeout - reset RX values if no ACK received for n milliseconds (200ms is typical for RF modules)
+  if (millis() - lastAckTime > 200) {
     rxVoltage = 0.0f;
     rxSuccessRate = 0.0f;
-    Serial.println("RX data timeout - resetting values");
+    
+    Serial.println();
+    Serial.println("**********  RX data timeout - resetting values **********");
+    Serial.println();
   }
   
   // Update display occasionally to save processing
@@ -234,17 +247,36 @@ void loop() {
     displayInfo(x, y, btnPressed, txVoltage, rxVoltage, txSuccessRate, rxSuccessRate);
     lastDisplay = millis();
   }
-  
-  // Periodic memory report
-  static uint32_t lastMemReport = 0;
-  if (millis() - lastMemReport > 5000) {
-    Serial.print("Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
-    // NRF signal report
-    Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
-    Serial.print("Packet Index: "); Serial.print(packetIndex); Serial.print(" | ");
-    Serial.print("Success Rate: "); Serial.println(getSuccessRate() * 100);
 
-    lastMemReport = millis();
+  if (Serial) { // Check if serial is connected (monitored by PC)
+    // Periodic memory report
+
+    static uint32_t lastMemReport = 0;
+    if (millis() - lastMemReport > 1000) {
+      Serial.print(" | Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
+
+      // NRF signal report
+      Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
+      Serial.print("Packet Index: "); Serial.print(packetIndex); Serial.print(" | ");
+      Serial.print(" | TX Success Rate: "); Serial.print(" | ");
+      Serial.print(getSuccessRate() * 100);
+      
+      // XY Axis + Button
+      Serial.print("X Axis: "); Serial.print(x); Serial.print(" | ");
+      Serial.print("Y Axis: "); Serial.print(y); Serial.print(" | ");
+      Serial.print("Button: "); Serial.print(btnPressed ? "Pressed" : "Released"); Serial.print(" | ");
+
+      // Voltage
+      Serial.print("TX Voltage: ");
+      Serial.print(analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f + 0.04f);
+      Serial.print(" (");
+      Serial.print(analogRead(VOLTAGE_SENSOR_PIN));
+      Serial.print(")"); Serial.print(" | ");
+
+      Serial.println("");
+
+      lastMemReport = millis();
+    }
   }
   
   delay(LOOP_DELAY_MS);

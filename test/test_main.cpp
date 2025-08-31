@@ -40,8 +40,8 @@ MotorTargets mt;
 
 void setUp(void) {
     input = {};
-    input.joystick.correctedX = 512;
-    input.joystick.correctedY = 512;
+    input.joystick.rawX = 512;        // Updated to use rawX instead of correctedX
+    input.joystick.rawY = 512;        // Updated to use rawY instead of correctedY
     input.joystick.buzzerOn = false;
     input.leftSpeed = 0;
     input.rightSpeed = 0;
@@ -82,22 +82,26 @@ void test_slewRateLimit_ramp_down(void) {
 
 void test_slewRateLimit_zero_crossing(void) {
     // Crossing zero from positive to negative and vice versa
-    TEST_ASSERT_EQUAL_MESSAGE(20 - RAMP_STEP > -MIN_MOTOR_SPEED ? 0 : 20 - RAMP_STEP, slewRateLimit(20, -100), "Zero crossing: 20->-100");
-    TEST_ASSERT_EQUAL_MESSAGE(-20 + RAMP_STEP < MIN_MOTOR_SPEED ? 0 : -20 + RAMP_STEP, slewRateLimit(-20, 100), "Zero crossing: -20->100");
+    // These test the logic: "when crossing zero, clamp to zero if we'd end up in weak motor range"
+    
+    // 20 -> -100: ramps to (20-30)=-10, which is > -MIN_MOTOR_SPEED(-70), so clamps to 0
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100), "Zero crossing: 20->-100 should clamp to 0");
+    // -20 -> 100: ramps to (-20+30)=10, which is < MIN_MOTOR_SPEED(70), so clamps to 0  
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100), "Zero crossing: -20->100 should clamp to 0");
 }
 
 void test_slewRateLimit_small_steps(void) {
     // Small increments and decrements
 
-    // first step => below deadzone => expect 0
-    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2), "Small step below deadzone: 1->2 (should be 0)");
-    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2), "Small step below deadzone: -1->-2 (should be 0)");
-    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0), "Small step below deadzone: 1->0 (should be 0)");
-    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0), "Small step below deadzone: -1->0 (should be 0)");
+    // Very small motor values => should clamp to zero due to MOTOR_DEADZONE
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2), "Small step below motor deadzone: 1->2 (should be 0)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2), "Small step below motor deadzone: -1->-2 (should be 0)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0), "Small step below motor deadzone: 1->0 (should be 0)");
+    TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0), "Small step below motor deadzone: -1->0 (should be 0)");
 
-    // second step => above deadzone => expect RAMP_STEP
-    TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2), "Small step above deadzone: +2 (should increase by +2)");
-    TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED,-MIN_MOTOR_SPEED - 2), "Small step above deadzone: +2 in reverse (should decrease further by -2)");
+    // Motor values above MIN_MOTOR_SPEED => should apply small increments
+    TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2), "Small step above MIN_MOTOR_SPEED: +2 (should increase by +2)");
+    TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED,-MIN_MOTOR_SPEED - 2), "Small step above MIN_MOTOR_SPEED: +2 in reverse (should decrease further by -2)");
 }
 
 void test_slewRateLimit_min_speed_behavior(void) {
@@ -142,17 +146,17 @@ void test_processJoystick_buzzer(void) {
 void test_processJoystick_movement(void) {
     js = processJoystick(512 + 50, 512 - 100, false, false);
 
-    printf ("Joystick: %d, %d\n", js.correctedX, js.correctedY);
+    printf ("Joystick: %d, %d\n", js.rawX, js.rawY);
 
-    TEST_ASSERT_INT_WITHIN(2, 512 + 50, js.correctedX);
-    TEST_ASSERT_INT_WITHIN(2, 512 - 100, js.correctedY);
+    TEST_ASSERT_INT_WITHIN(2, 512 + 50, js.rawX);
+    TEST_ASSERT_INT_WITHIN(2, 512 - 100, js.rawY);
     TEST_ASSERT_FALSE(js.buzzerOn);
 }
 
 void test_processJoystick_deadzone_behavior(void) {
     js = processJoystick(514, 510, false, false);  // small deviation
-    TEST_ASSERT_INT_WITHIN(3, 512, js.correctedX);  // Assuming deadzone absorbs minor noise
-    TEST_ASSERT_INT_WITHIN(3, 512, js.correctedY);
+    TEST_ASSERT_INT_WITHIN(3, 514, js.rawX);  // Raw values should be preserved
+    TEST_ASSERT_INT_WITHIN(3, 510, js.rawY);
 }
 
 void test_computeMotorTargets_still(void) {
@@ -163,7 +167,7 @@ void test_computeMotorTargets_still(void) {
 }
 
 void test_computeMotorTargets_right_turn(void) {
-    js = processJoystick((512 + 50), 512, false, false); // correctedY = -100
+    js = processJoystick((512 + 50), 512, false, false); // Right turn - X > center
     mt = computeMotorTargets(js, 0, 0);
 
     TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio should be > 0");  
@@ -172,28 +176,28 @@ void test_computeMotorTargets_right_turn(void) {
 }
 
 void test_computeMotorTargets_left_turn(void) {
-    js = processJoystick(512 - 50, 512, false, false); // correctedY = 0
+    js = processJoystick(512 - 50, 512, false, false); // Left turn - X < center
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= MIN_MOTOR_SPEED");
     TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
 }
 
 void test_computeMotorTargets_forward(void) {
-    js = processJoystick(512, 512 + 50, false, false);
+    js = processJoystick(512, 512 + 100, false, false);  // 612 > 587 (FORWARD_THRESHOLD)
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be >= than MIN_MOTOR_SPEED");
 }
 
 void test_computeMotorTargets_reverse(void) {
-    js = processJoystick(512, 512 - 50, false, false);
+    js = processJoystick(512, 512 - 100, false, false);  // 412 < 437 (BACKWARD_THRESHOLD)
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be less than -MIN_MOTOR_SPEED");
 }
 
 void test_computeMotorTargets_sharp_right_turn(void) {
-    js = processJoystick(512 + 500, 512, false, false); // correctedY
+    js = processJoystick(512 + 500, 512, false, false); // Sharp right turn - X >> center
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left motor target should be >= than MIN_MOTOR_SPEED");
     TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right motor target should be <= than -MIN_MOTOR_SPEED (reverse)");
@@ -201,7 +205,7 @@ void test_computeMotorTargets_sharp_right_turn(void) {
 }
 
 void test_computeMotorTargets_sharp_left_turn(void) {
-    js = processJoystick(512 - 500, 512, false, false); // correctedY
+    js = processJoystick(512 - 500, 512, false, false); // Sharp left turn - X << center
     mt = computeMotorTargets(js, 0, 0);
     TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left motor target should be less than -MIN_MOTOR_SPEED (reverse)");
     TEST_ASSERT_GREATER_THAN_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right motor target should be greater than MIN_MOTOR_SPEED");
@@ -329,8 +333,8 @@ void test_processJoystick_NoMotion() {
     js = processJoystick(512, 512, false, false);
     mt = computeMotorTargets(js, 0, 0);
 
-    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.correctedX);
-    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.correctedY);
+    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.rawX);
+    TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, 512, js.rawY);
     TEST_ASSERT_EQUAL(0, mt.left);
     TEST_ASSERT_EQUAL(0, mt.right);
 }
@@ -362,23 +366,45 @@ void test_slewRateLimit_RampsDownToZero() {
     TEST_ASSERT_EQUAL(0, mt.right);
 }
 
-// --- Test: Brake Enforced ---
-void test_Brake_EnforcesZeroSpeed() {
+// --- Test: Full Speed to Complete Stop via Slew Rate Limiting ---
+// This test validates the complete motor control cycle: acceleration → high speed → gradual deceleration → stop
+// It simulates a real-world scenario where a user pushes the joystick to full speed, then releases it to center
+void test_SlewRateLimit_FullCycleAccelerateAndStop() {
 
-    js = processJoystick(512 + 400, 512 + 400, false, false);  // Try to go forward
+    // Phase 1: Accelerate to high speed with diagonal movement (forward + right turn)
+    js = processJoystick(512 + 400, 512 + 400, false, false);  // Diagonal: forward-right (912, 912)
+    
+    // Simulate 20 control loops to allow motors to ramp up to maximum speed
+    // This tests that slew rate limiting allows gradual acceleration
+    for (int i = 0; i < 20; i++) {
+        mt = computeMotorTargets(js, mt.left, mt.right);
+    }
+    // At this point, motors should be at high speed (likely around MAX_SPEED)
 
+    // Phase 2: User releases joystick to center - command stop
+    js = processJoystick(512, 512, false, false);  // Center position = no movement requested
+    
+    // Simulate 20 more control loops to allow motors to gradually decelerate
+    // This tests that slew rate limiting provides smooth deceleration rather than instant stop
     for (int i = 0; i < 20; i++) {
         mt = computeMotorTargets(js, mt.left, mt.right);
     }
 
-    js = processJoystick(512, 512, false, false);  // Try to go forward
+    // Final validation: Motors should have completely stopped
+    TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor should have gradually decelerated to complete stop");
+    TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor should have gradually decelerated to complete stop");
+}
 
-    for (int i = 0; i < 20; i++) {
-        mt = computeMotorTargets(js, mt.left, mt.right);
-    }
-
-    TEST_ASSERT_EQUAL(0, mt.left);
-    TEST_ASSERT_EQUAL(0, mt.right);
+// --- Test: Configuration Constants Validation ---
+void test_configuration_constants(void) {
+    // These tests help catch configuration changes that might break motor control
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, MIN_MOTOR_SPEED, "MIN_MOTOR_SPEED must be positive");
+    TEST_ASSERT_LESS_THAN_MESSAGE(MAX_SPEED, MIN_MOTOR_SPEED, "MIN_MOTOR_SPEED must be less than MAX_SPEED");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, RAMP_STEP, "RAMP_STEP must be positive");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, JOYSTICK_DEADZONE, "JOYSTICK_DEADZONE must be positive");
+    TEST_ASSERT_EQUAL_MESSAGE(512, JOYSTICK_CENTER, "JOYSTICK_CENTER should be 512 for raw values");
+    TEST_ASSERT_EQUAL_MESSAGE(JOYSTICK_CENTER + JOYSTICK_DEADZONE, FORWARD_THRESHOLD, "FORWARD_THRESHOLD consistency");
+    TEST_ASSERT_EQUAL_MESSAGE(JOYSTICK_CENTER - JOYSTICK_DEADZONE, BACKWARD_THRESHOLD, "BACKWARD_THRESHOLD consistency");
 }
 
 
@@ -421,7 +447,10 @@ int main(void) {
     RUN_TEST(test_slewRateLimit_at_boundaries);
     RUN_TEST(test_slewRateLimit_RampsDownToZero);
 
-    RUN_TEST(test_Brake_EnforcesZeroSpeed);
+    RUN_TEST(test_SlewRateLimit_FullCycleAccelerateAndStop);
+
+    // Configuration validation tests
+    RUN_TEST(test_configuration_constants);
 
     
     return UNITY_END();

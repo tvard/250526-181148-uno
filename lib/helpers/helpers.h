@@ -7,6 +7,7 @@
 // Constants
 const int MAX_SPEED        = 255;
 const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
+const int MOTOR_DEADZONE   = 10; // motor values within this range of zero are considered stopped
 
 const int LEFT_OFFSET      = +5;  // Offset for left motor speed
 const int RIGHT_OFFSET     = -5;  // Offset for right motor speed
@@ -18,11 +19,20 @@ const int SCAN_INTERVAL    = 300; // Time between distance measurements
 const int LOOP_DELAY_MS = 1; // how often we run the main loop
 const int RAMP_STEP = 30;    // how many speed units we change per loop, less = smoother but slower response
 
+// Voltage Divider Constants (shared between transmitter and receiver)
+// Current configuration: R1 = 276K (3 x 92K), R2 = 100K
+// Arduino: 3.3V/8MHz, ADC reference = 3.29V measured
+const float VOLTAGE_ADC_REFERENCE = 3.29f;        // Measured ADC reference voltage (3.3V Arduino)
+const float VOLTAGE_DIVIDER_RATIO = 3.76f;        // (R1 + R2) / R2 = (276K + 100K) / 100K = 3.76
+const float VOLTAGE_CALIBRATION_BATTERY = 12.27f; // Actual battery voltage when ADC reads maximum
+const float VOLTAGE_CALIBRATION_ADC_PIN = 3.29f;  // Voltage at ADC pin when battery = 12.27V
+
 // 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
 //    constaint to MIN_MOTOR_SPEED, maxMotorSpeed and apply ramping
-const int JOYSTICK_DEADZONE = 75;                       // deadzone around center based on joystick variance (increased to prevent micro-activation)
-const int FORWARD_THRESHOLD = 512 + JOYSTICK_DEADZONE;  // center = 512, forward = 1023  (center can change with usage)
-const int BACKWARD_THRESHOLD = 512 - JOYSTICK_DEADZONE; // center = 512, backward = 0
+const int JOYSTICK_CENTER = 512;                        // Center position of joystick (0-1023 range)
+const int JOYSTICK_DEADZONE = 75;                       // deadzone around center based on joystick variance
+const int FORWARD_THRESHOLD = JOYSTICK_CENTER + JOYSTICK_DEADZONE;  // 512 + 75 = 587
+const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // 512 - 75 = 437
 
 // function declarations
 int slewRateLimit(int current, int target);
@@ -55,8 +65,8 @@ struct JoystickProcessingResult {
     float rawRatioLR;
     float steppedRatioLR;
     float quantizeStep;
-    int correctedX;
-    int correctedY;
+    int rawX;         // Raw joystick X (0-1023, center = 512)
+    int rawY;         // Raw joystick Y (0-1023, center = 512)
     bool buzzerOn;
 };
 
