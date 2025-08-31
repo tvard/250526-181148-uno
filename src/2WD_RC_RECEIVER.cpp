@@ -7,17 +7,18 @@
 #include "pitches.h"
 
 // Pin Definitions
-const int RIGHT_MOTOR_IN1 = 2;
-const int RIGHT_MOTOR_IN2 = 3;
-const int RIGHT_MOTOR_EN = 5;
-const int LEFT_MOTOR_IN1 = 4;
-const int LEFT_MOTOR_IN2 = 7;
-const int LEFT_MOTOR_EN = 6;
+const int RIGHT_MOTOR_EN = 5;   // L293D PIN 1 (Enable 1)
+const int RIGHT_MOTOR_IN1 = 3;  // L293D PIN 2 (Input 1)
+const int RIGHT_MOTOR_IN2 = 2;  // L293D PIN 7 (Input 2)
+
+const int LEFT_MOTOR_EN = 6;    // L293D PIN 9 (Enable 2)
+const int LEFT_MOTOR_IN2 = 7;   // L293D PIN 10 (Input 4)
+const int LEFT_MOTOR_IN1 = 9;   // L293D PIN 15 (Input 3)
 
 const int BUZZER_PIN = 8;
 const int NRF_CE_PIN = 10;   // CE pin  
 const int NRF_CSN_PIN = A0;  // CSN pin - works perfectly as digital pin
-const int VOLTAGE_ADC_PIN = A2; // Analog voltage sensing pin
+const int VOLTAGE_ADC_PIN = A1; // Analog voltage sensing pin
 
 // Radio configuration - MUST MATCH TRANSMITTER
 const int RADIO_CHANNEL = 76;
@@ -421,6 +422,7 @@ void printStatusReport() {
   if (isFirstReport) {
     Serial.println("");
     Serial.println("=== RECEIVER STATUS REPORT ===");
+    Serial.println("");
     isFirstReport = false;
   }
 
@@ -451,7 +453,19 @@ void printStatusReport() {
   Serial.print(joystickY);
   Serial.print(", Button: ");
   Serial.print(joystickButton ? "PRESSED" : "Released");
-  
+
+  // voltage
+  Serial.print(" | RX Voltage: ");
+  // Calculate actual battery voltage using shared calibration constants
+  float adcValue = analogRead(VOLTAGE_ADC_PIN);
+  float adcVoltage = adcValue * VOLTAGE_ADC_REFERENCE / 1023.0; // Convert ADC reading to voltage at pin
+  float batteryVoltage = adcVoltage * (VOLTAGE_CALIBRATION_BATTERY / VOLTAGE_CALIBRATION_ADC_PIN); // Scale to actual battery voltage
+  Serial.print(batteryVoltage, 2);
+  Serial.print("V");
+  Serial.print(" (ADC: ");
+  Serial.print(adcValue);
+  Serial.print(")");
+
   // Memory status
   extern int __heap_start, *__brkval;
   int v;
@@ -469,4 +483,6 @@ void printStatusReport() {
   Serial.print("m ");
   Serial.print(uptimeSec % 60);
   Serial.print("s");
+
+  Serial.println("");
 }

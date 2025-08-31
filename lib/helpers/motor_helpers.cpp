@@ -37,9 +37,9 @@ int slewRateLimit(int current, int target)
         next = target;
     }
 
-    // If both target and next are within the deadzone, output zero
-    if (next > -JOYSTICK_DEADZONE && next < JOYSTICK_DEADZONE &&
-        target > -JOYSTICK_DEADZONE && target < JOYSTICK_DEADZONE) {
+    // If both target and next are within the motor deadzone, output zero
+    if (next > -MOTOR_DEADZONE && next < MOTOR_DEADZONE &&
+        target > -MOTOR_DEADZONE && target < MOTOR_DEADZONE) {
         return 0;
     }
 
@@ -49,15 +49,22 @@ int slewRateLimit(int current, int target)
     } else if (current < 0 && next > -MIN_MOTOR_SPEED && next < 0) {
         next = 0;
     }
+    
+    // For zero crossing, clamp to zero if we would end up in the weak motor range
+    if (current > 0 && next < 0 && next > -MIN_MOTOR_SPEED) {
+        next = 0;
+    } else if (current < 0 && next > 0 && next < MIN_MOTOR_SPEED) {
+        next = 0;
+    }
 
     // Clamp to min/max if outside allowed range
     if (next > MAX_SPEED) next = MAX_SPEED;
     if (next < -MAX_SPEED) next = -MAX_SPEED;
 
     // Clamp to MIN_MOTOR_SPEED when ramping up and next is between deadzone and MIN_MOTOR_SPEED
-    if (next > 0 && next >= JOYSTICK_DEADZONE && next < MIN_MOTOR_SPEED) {
+    if (next > 0 && next >= MOTOR_DEADZONE && next < MIN_MOTOR_SPEED) {
         next = MIN_MOTOR_SPEED;
-    } else if (next < 0 && next <= -JOYSTICK_DEADZONE && next > -MIN_MOTOR_SPEED) {
+    } else if (next < 0 && next <= -MOTOR_DEADZONE && next > -MIN_MOTOR_SPEED) {
         next = -MIN_MOTOR_SPEED;
     }
 
@@ -71,16 +78,15 @@ int slewRateLimit(int current, int target)
 /// @param prevRight The previous right motor speed.
 /// @return The computed motor targets.
 /// @remarks
-/// Forward/backward is controlled by correctedY, Left/Right is controlled by correctedX
+/// Forward/backward is controlled by rawY, Left/Right is controlled by rawX
 /// The mixing formula is standard for differential drive (tank drive)
 MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLeft, int prevRight) {
     MotorTargets mt = {};
     float quantizeStep = js.quantizeStep;
     float steppedRatioLR = js.steppedRatioLR;
-    int correctedY = js.correctedY + 512;
 
-    // In-place turn (sharp turn) scenario
-    if (abs(correctedY - 512) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= quantizeStep * 1.0) {
+    // In-place turn (sharp turn) scenario - when Y stick is near center (512) AND significant X deflection
+    if (abs(js.rawY - JOYSTICK_CENTER) < (0.20 * 1023.0) && fabs(steppedRatioLR) >= quantizeStep * 2.0) {
         int sp = map((int)(fabs(steppedRatioLR) * 100), 0, 100, MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 5);
         if (steppedRatioLR < 0) {
             mt.right = sp;
@@ -91,35 +97,37 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLef
             if (steppedRatioLR >= +0.9)
                 mt.right = -sp;
         }
-        mt.skipSlewRate = true;
+        mt.skipSlewRate = (fabs(steppedRatioLR) >= quantizeStep * 6.0);  // Only skip slew for very sharp turns
         return mt;
     }
 
-    // Forward/backward scaling
+    // Forward/backward scaling - using raw Y values
     int sp = 0;
-    if (correctedY > FORWARD_THRESHOLD) {
-        sp = map(constrain(correctedY, FORWARD_THRESHOLD, 1023), FORWARD_THRESHOLD, 1023, MIN_MOTOR_SPEED, MAX_SPEED);
+    if (js.rawY > FORWARD_THRESHOLD) {
+        sp = map(constrain(js.rawY, FORWARD_THRESHOLD, 1023), FORWARD_THRESHOLD, 1023, MIN_MOTOR_SPEED, MAX_SPEED);
         mt.left = sp;
         mt.right = sp;
         mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
         return mt;
-    } else if (correctedY < BACKWARD_THRESHOLD) {
-        sp = map(constrain(correctedY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
+    } else if (js.rawY < BACKWARD_THRESHOLD) {
+        sp = map(constrain(js.rawY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
         mt.left = sp;
         mt.right = sp;
         mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
         return mt;
     }
 
-    // Default: simple tank mixing + gentle turn
-    mt.left = js.correctedY + js.correctedX;
-    mt.right = js.correctedY - js.correctedX;
-    int turn = js.correctedX / 2;
+    // Default: simple tank mixing + gentle turn (convert to centered values for mixing)
+    int centeredY = js.rawY - JOYSTICK_CENTER;  // Convert to -512 to +511 for mixing
+    int centeredX = js.rawX - JOYSTICK_CENTER;  // Convert to -512 to +511 for mixing
+    mt.left = centeredY + centeredX;
+    mt.right = centeredY - centeredX;
+    int turn = centeredX / 2;
     mt.left = constrain(mt.left + turn, -MAX_SPEED, MAX_SPEED);
     mt.right = constrain(mt.right - turn, -MAX_SPEED, MAX_SPEED);
 
     // If the joystick is within the deadzone, stop the motors
-    if (abs(js.correctedX) < JOYSTICK_DEADZONE && abs(js.correctedY) < JOYSTICK_DEADZONE) {
+    if (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE) {
         mt.left = 0;
         mt.right = 0;
         mt.skipSlewRate = false;
@@ -142,24 +150,17 @@ bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetR
             (abs(prevLeft) > 0 || abs(prevRight) > 0));
 }
 
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw = true) {
+JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw) {
     JoystickProcessingResult js;
 
-    if (isRaw) {
-        // Raw joystick input: axes are swapped (X <-> Y) and inverted
-        // Center at zero and scale: from 0-1023 to -512 to +511
-        js.correctedX = 1023 - joystickY - 512;
-        js.correctedY = 1023 - joystickX - 512;
-    }
-    else {
-        js.correctedX = joystickX - 512;
-        js.correctedY = joystickY - 512;
-    }
+    // Keep raw values throughout - no conversion needed
+    js.rawX = joystickX;  // 0-1023, center = 512
+    js.rawY = joystickY;  // 0-1023, center = 512
 
     js.buzzerOn = joystickButton;
 
-    // Raw turning ratio
-    js.rawRatioLR = ((float)js.correctedX) / 512.0f;
+    // Raw turning ratio based on deviation from center (512)
+    js.rawRatioLR = ((float)(js.rawX - JOYSTICK_CENTER)) / 512.0f;
     js.rawRatioLR = constrain(js.rawRatioLR, -1.0f, 1.0f);
 
     // Quantized ratio
@@ -172,7 +173,7 @@ JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joys
 ManualModeOutputs manualModeStep(const ManualModeInputs& in) {
     ManualModeOutputs out = {};
     // 1. Process joystick input
-    JoystickProcessingResult js = processJoystick(in.joystick.correctedX, in.joystick.correctedY, in.joystick.buzzerOn);
+    JoystickProcessingResult js = processJoystick(in.joystick.rawX, in.joystick.rawY, in.joystick.buzzerOn, true);
 
     // 2. Compute motor targets and slew skip
     MotorTargets mt = computeMotorTargets(js, in.leftSpeed, in.rightSpeed);
