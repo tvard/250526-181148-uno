@@ -7,6 +7,8 @@
 #endif
 
 #include <helpers.h>
+#include "../lib/helpers/display_helpers.h"
+#include "2WD_RC_TRANSMITTER_logic.h"
 
 // Pin definitions
 #define JOY_BUTTON_PIN A0
@@ -52,11 +54,12 @@ uint8_t packetIndex = 0;
 int16_t xCalib = 0, yCalib = 0;
 bool displayReady = false;
 
-// Dynamic range tracking for better mapping
-uint16_t xMin = 512, xMax = 512; // Start at center, expand as we see actual values
-uint16_t yMin = 512, yMax = 512;
+// Stable center positions and min/max for percent mapping (shared with logic)
+extern uint16_t xMin, xMax, yMin, yMax;
+extern uint16_t xCenter, yCenter;
 
-// Stable center positions (set during calibration)
+// Actual definitions
+uint16_t xMin = 0, xMax = 1023, yMin = 0, yMax = 1023;
 uint16_t xCenter = 512, yCenter = 512;
 
 // Range expansion factors to be more aggressive in capturing full range
@@ -76,8 +79,8 @@ void drawThrottle(int x, int y, int barX, int barY, int offsetX);
 void drawLeftRightBar(int x, int y, int barX, int barY, int offsetX);
 
 // Calculation functions (separated from display for testing)
-int calculateThrottlePercent(int y);
-int calculateLeftRightPercent(int x);
+extern int calculateThrottlePercent(int y);
+extern int calculateLeftRightPercent(int x);
 
 // Free memory utility
 int freeMemory() {
@@ -128,14 +131,13 @@ void setup() {
   // Set stable center positions after calibration
   xCenter = 512;  // This is our target center after calibration
   yCenter = 512;  // This is our target center after calibration
-  
-  // Initialize range with full ADC range for maximum responsiveness
-  // Use the absolute extremes with tiny margins only for electrical noise
-  xMin = 10;       // Almost full range
-  xMax = 1013;     // Almost full range
-  yMin = 10;       // Almost full range
-  yMax = 1013;     // Almost full range
 
+    // Set min/max for percent mapping (full ADC range)
+    xMin = 0;
+    xMax = 1023;
+    yMin = 0;
+    yMax = 1023;
+  
   display->println("Calibration Complete");
   display->print("Final X Calibration: ");
   display->print((xCalib >= 0) ? "+" : "-");
@@ -218,20 +220,6 @@ void loop() {
   uint16_t y = constrain(rawY, 0, 1023);
   y = 1023 - y; // Invert Y axis
 
-  // Update dynamic range tracking for better percentage mapping
-  if (x < xMin) {
-    xMin = (uint16_t)max(0, (int)x - RANGE_EXPANSION_FACTOR);
-  }
-  if (x > xMax) {
-    xMax = min(1023, (int)x + RANGE_EXPANSION_FACTOR); // Expand beyond current value
-  }
-  if (y < yMin) {
-    yMin = max(0, (int)y - RANGE_EXPANSION_FACTOR);  // Expand beyond current value
-  }
-  if (y > yMax) {
-    yMax = min(1023, (int)y + RANGE_EXPANSION_FACTOR); // Expand beyond current value
-  }
-
   static float rxVoltage = 0.0f;
   static float rxSuccessRate = 0.0f;
   static uint32_t lastAckTime = 0;
@@ -295,7 +283,7 @@ void loop() {
 
     static uint32_t lastMemReport = 0;
     if (millis() - lastMemReport > 1000) {
-      Serial.print(" | Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
+      // Serial.print(" | Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
 
       // NRF signal report
       Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
@@ -307,16 +295,16 @@ void loop() {
 
       // XY Axis + Button with range info
       Serial.print("X: "); Serial.print(x); 
-      Serial.print(" ("); Serial.print(xMin); Serial.print("-"); Serial.print(xMax); Serial.print(")");
+      Serial.print(" (ADC: "); Serial.print(rawX); Serial.print(")");
       Serial.print(" L/R: "); Serial.print(calculateLeftRightPercent(x)); Serial.print("%");
       Serial.print(" | Y: "); Serial.print(y);
-      Serial.print(" ("); Serial.print(yMin); Serial.print("-"); Serial.print(yMax); Serial.print(")");
+      Serial.print(" (ADC: "); Serial.print(rawY); Serial.print(")");
       Serial.print(" THR: "); Serial.print(calculateThrottlePercent(y)); Serial.print("%");
       Serial.print(" | Button: "); Serial.print(btnPressed ? "Pressed" : "Released"); Serial.print(" | ");
 
       // Voltage
       Serial.print("TX Voltage: ");
-      Serial.print(analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f + 0.04f);
+      Serial.print(analogRead(VOLTAGE_SENSOR_PIN) * 3.3f / 1023.0f + 0.04f);
       Serial.print(" (");
       Serial.print(analogRead(VOLTAGE_SENSOR_PIN));
       Serial.print(")"); Serial.print(" | ");
@@ -417,72 +405,48 @@ void drawRssi(float rssi, int barX, int barY, bool showLabel, const char* suffix
 }
 
 void drawThrottle(int x, int y, int barX, int barY, int offsetX) {
-  const int barH = 6;  // height of bar
-  const int barW = 52; // total width of bar
-
-  // Use the separated calculation function
+  const int barW = 52;
+  const int barH = 6;
   int throttlePercent = calculateThrottlePercent(y);
-
+  FillBarResult r = calculateThrottleFillBar(throttlePercent, barW);
+  Serial.print("| [THR] percent: "); Serial.print(throttlePercent); Serial.print(" | ");
+  Serial.print(" fillWidth: "); Serial.print(r.fillWidth); Serial.print(" | ");
   display->setCursor(barX, barY);
   display->print("THR");
-
-  // Draw outline
   display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
-
-  // Draw center line at 50%
   int centerX = barX + offsetX + (barW / 2);
   display->drawFastVLine(centerX, barY, barH, SSD1306_WHITE);
-
-  // Fill based on throttle percentage (50% = center)
-  if (throttlePercent > 50) {
-    // Forward: fill from center to right
-    int fillW = map(throttlePercent, 50, 100, 0, (barW / 2) - 1);
-    fillW = constrain(fillW, 0, (barW / 2) - 1);
-    display->fillRect(centerX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
-  } else if (throttlePercent < 50) {
-    // Reverse: fill from center to left (NOT from left edge)
-    int fillW = map(throttlePercent, 0, 50, (barW / 2) - 1, 0);
-    fillW = constrain(fillW, 0, (barW / 2) - 1);
-    display->fillRect(centerX - fillW, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+  if (r.fillWidth > 0) {
+    if (throttlePercent > 50) {
+      display->fillRect(centerX + 1, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
+    } else {
+      display->fillRect(centerX - r.fillWidth, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
+    }
   }
-  // At exactly 50%, no fill (just center line)
-  
   display->setCursor(offsetX + barW + 2, barY);
   display->print(throttlePercent);
   display->print('%');
 }
 
 void drawLeftRightBar(int x, int y, int barX, int barY, int offsetX) {
-  const int barW = 52;    // total width of bar
+  const int barW = 52;
   const int barH = 6;
-
-  // Use the separated calculation function
   int leftRightPercent = calculateLeftRightPercent(x);
-
+  FillBarResult r = calculateLeftRightFillBar(leftRightPercent, barW);
+  Serial.print("| [L/R] percent: "); Serial.print(leftRightPercent); Serial.print(" | ");
+  Serial.print(" fillWidth: "); Serial.print(r.fillWidth); Serial.print(" | ");
   display->setCursor(barX, barY);
   display->print("L/R");
-
-  // Draw outline
   display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
-
-  // Draw center line at 0%
   int centerX = barX + offsetX + (barW / 2);
   display->drawFastVLine(centerX, barY, barH, SSD1306_WHITE);
-
-  // Fill based on left/right percentage (-100% to +100%, 0% = center)
-  if (leftRightPercent > 0) {
-    // Right: fill from center to right
-    int fillW = map(leftRightPercent, 0, 100, 0, (barW / 2) - 1);
-    fillW = constrain(fillW, 0, (barW / 2) - 1);
-    display->fillRect(centerX + 1, barY + 1, fillW, barH - 2, SSD1306_WHITE);
-  } else if (leftRightPercent < 0) {
-    // Left: fill from center to left (NOT from left edge)
-    int fillW = map(-leftRightPercent, 0, 100, 0, (barW / 2) - 1);
-    fillW = constrain(fillW, 0, (barW / 2) - 1);
-    display->fillRect(centerX - fillW, barY + 1, fillW, barH - 2, SSD1306_WHITE);
+  if (r.fillWidth > 0) {
+    if (leftRightPercent > 0) {
+      display->fillRect(centerX + 1, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
+    } else {
+      display->fillRect(centerX - r.fillWidth, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
+    }
   }
-  // At exactly 0%, no fill (just center line)
-
   display->setCursor(offsetX + barW + 2, barY);
   display->print(leftRightPercent);
   display->print('%');

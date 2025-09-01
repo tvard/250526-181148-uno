@@ -1,17 +1,15 @@
-// Shared calculation logic for transmitter
+#include "2WD_RC_TRANSMITTER_logic.h"
 #include <stdint.h>
 #include <math.h>
+#include <stdlib.h>
 
-extern uint16_t xMin, xMax, yMin, yMax;
-extern uint16_t xCenter, yCenter;
+extern uint16_t xMin, xMax, xCenter;
+extern uint16_t yMin, yMax, yCenter;
 
 int calculateThrottlePercent(int y) {
-    float throttlePercent;
-    if (y > yCenter) {
-        throttlePercent = 50.0f + ((float)(y - yCenter) / (float)(yMax - yCenter)) * 50.0f;
-    } else {
-        throttlePercent = ((float)(y - yMin) / (float)(yCenter - yMin)) * 50.0f;
-    }
+    if (y < yMin) y = yMin;
+    if (y > yMax) y = yMax;
+    float throttlePercent = ((float)(y - yMin) / (float)(yMax - yMin)) * 100.0f;
     bool nearCenterRaw = abs(y - (int)yCenter) < 15;
     bool nearCenterPercent = abs(throttlePercent - 50.0f) <= 2.0f;
     if (nearCenterRaw && nearCenterPercent) {
@@ -32,5 +30,8 @@ int calculateLeftRightPercent(int x) {
     if (nearCenterRaw && nearCenterPercent) {
         leftRightPercent = 0.0f;
     }
+    // Clamp output
+    if (leftRightPercent > 100.0f) leftRightPercent = 100.0f;
+    if (leftRightPercent < -100.0f) leftRightPercent = -100.0f;
     return (int)round(leftRightPercent);
 }
