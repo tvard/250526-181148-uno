@@ -1,3 +1,6 @@
+#include "../src/2WD_RC_RECEIVER_logic.cpp"
+#include "../lib/helpers/helpers.h"
+#include "../lib/helpers/motor_helpers.cpp"
 /*
  *      
  *      Test Suite for Arduino/PlatformIO Projects, Instructions:
@@ -28,7 +31,11 @@
  */
 
 #include <unity.h>
-#include "helpers.h"
+// Use shared logic headers for calculation functions
+
+
+#include "../src/2WD_RC_RECEIVER_logic.h"
+
 // #include "test_display_mock.h"
 
 // Arduino compatibility for native environment
@@ -38,14 +45,47 @@
 #define abs(x) ((x)>0?(x):-(x))
 #define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
 #define map(x, in_min, in_max, out_min, out_max) ((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
+// Stub Arduino functions
+#define digitalWrite(pin, val) ((void)0)
+#define analogWrite(pin, val) ((void)0)
+#define analogRead(pin) (0)
+#define delay(ms) ((void)0)
+#define millis() (0UL)
+#define tone(pin, freq) ((void)0)
+#define noTone(pin) ((void)0)
+#define pinMode(pin, mode) ((void)0)
+#define map(x, in_min, in_max, out_min, out_max) ((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+#define abs(x) ((x)>0?(x):-(x))
+
+// Stub constants
+#define A0 0
+#define A1 1
+#define A2 2
+#define A3 3
+
+// Stub Serial
+struct {
+    void begin(int) {}
+    void println(const char*) {}
+    void println(int) {}
+    void print(const char*) {}
+    void print(int) {}
+} Serial;
 #endif
 
-// Mock display instance
-MockDisplay* display = nullptr;
 
-// External variables from main firmware that our calculation functions need
-extern uint16_t xMin, xMax, yMin, yMax;
-extern uint16_t xCenter, yCenter;
+// // Mock display instance
+// MockDisplay* display = nullptr;
+
+
+// Dummy calibration variables for native tests
+uint16_t xMin = 0;
+uint16_t xMax = 1023;
+uint16_t yMin = 0;
+uint16_t yMax = 1023;
+uint16_t xCenter = 512;
+uint16_t yCenter = 512;
 
 // Declare the calculation functions we want to test
 int calculateThrottlePercent(int y);
@@ -500,12 +540,12 @@ void test_leftmost_position_no_deadzone_interference(void) {
 }
 
 void test_xMin_underflow_protection(void) {
-    // Test for underflow protection: xMin should not go below 0
+    // Test for underflow protection: xMin should not go below -100%
     setupJoystickRange(0, 1023, 0, 1023);
     
     // Simulate extreme left position
     int leftResult = calculateLeftRightPercent(-10); // Out of bounds
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, leftResult, "xMin underflow should be clamped to 0%");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftResult, "xMin underflow should be clamped to -100%");
 }
 
 // ============================================================================
@@ -694,7 +734,7 @@ void test_center_position_no_fill(void) {
     simulateFillBarDrawing(50, 0);  // Perfect center
     
     TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillHeight, "Center throttle should have no fill height");
-    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillWidth, "Center L/R should have no fill width");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillWidth, "Center L/R should have no width fill");
     TEST_ASSERT_TRUE_MESSAGE(fillBarResults.centerLineDrawn, "Center position should show center line");
 }
 

@@ -1,6 +1,7 @@
 {
     "files.associations": {
         "*.extension": "bat",
-        "helpers.h": "c"
+        "helpers.h": "c",
+        "*.disabled": "cpp"
     }
 }
