@@ -57,7 +57,7 @@ uint16_t yMin = 512, yMax = 512;
 uint16_t xCenter = 512, yCenter = 512;
 
 // Range expansion factors to be more aggressive in capturing full range
-const uint16_t RANGE_EXPANSION_FACTOR = 100; // More aggressive range expansion for better joystick response
+const uint16_t RANGE_EXPANSION_FACTOR = 50; // More aggressive range expansion for better joystick response
 
 // Function prototypes
 int freeMemory();
@@ -216,10 +216,8 @@ void loop() {
   y = 1023 - y; // Invert Y axis
 
   // Update dynamic range tracking for better percentage mapping
-  // TEMPORARILY DISABLED - using fixed ranges for debugging
-  /*
   if (x < xMin) {
-    xMin = max(0, (int)x - RANGE_EXPANSION_FACTOR);  // Expand beyond current value
+    xMin = (uint16_t)max(0, (int)x - RANGE_EXPANSION_FACTOR);
   }
   if (x > xMax) {
     xMax = min(1023, (int)x + RANGE_EXPANSION_FACTOR); // Expand beyond current value
@@ -230,7 +228,6 @@ void loop() {
   if (y > yMax) {
     yMax = min(1023, (int)y + RANGE_EXPANSION_FACTOR); // Expand beyond current value
   }
-  */
 
   static float rxVoltage = 0.0f;
   static float rxSuccessRate = 0.0f;

@@ -29,7 +29,7 @@
 
 #include <unity.h>
 #include "helpers.h"
-#include "test_display_mock.h"
+// #include "test_display_mock.h"
 
 // Arduino compatibility for native environment
 #ifndef ARDUINO
@@ -499,6 +499,15 @@ void test_leftmost_position_no_deadzone_interference(void) {
     TEST_ASSERT_INT_WITHIN_MESSAGE(3, 50, throttleCenter, "Center Y should be ~50%");
 }
 
+void test_xMin_underflow_protection(void) {
+    // Test for underflow protection: xMin should not go below 0
+    setupJoystickRange(0, 1023, 0, 1023);
+    
+    // Simulate extreme left position
+    int leftResult = calculateLeftRightPercent(-10); // Out of bounds
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, leftResult, "xMin underflow should be clamped to 0%");
+}
+
 // ============================================================================
 // Tests for Real-World Joystick Issues
 // ============================================================================
@@ -808,7 +817,8 @@ int main(void) {
     RUN_TEST(test_maximum_fill_constraints);
     RUN_TEST(test_fill_bar_edge_cases);
     RUN_TEST(test_leftmost_position_no_deadzone_interference);
-    
+    RUN_TEST(test_xMin_underflow_protection);
+
     // Real-world joystick issue tests
     RUN_TEST(test_leftmost_position_real_world);
     RUN_TEST(test_rightmost_position_real_world);
