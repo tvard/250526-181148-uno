@@ -43,6 +43,9 @@ String pad5f(float val);
 String pad3(int val);
 String pad3f(float val);
 String pad3s(int val);
+String pad4s(int val);  // 4-char right-aligned signed integer (for motor speeds)
+String pad2s(int val);  // 2-char right-aligned integer (for percentages/minutes/seconds)
+String padString(String str, int width, char padChar = ' ', bool leftAlign = false);
 #else
 #include <string>
 std::string pad5(int val);
@@ -50,6 +53,9 @@ std::string pad5f(float val);
 std::string pad3(int val);
 std::string pad3f(float val);
 std::string pad3s(int val);
+std::string pad4s(int val);  // 4-char right-aligned signed integer (for motor speeds)
+std::string pad2s(int val);  // 2-char right-aligned integer (for percentages/minutes/seconds)
+std::string padString(std::string str, int width, char padChar = ' ', bool leftAlign = false);
 #endif
 
 

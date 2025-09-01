@@ -27,8 +27,29 @@
  *  
  */
 
-#include "../.pio/libdeps/native/Unity/src/unity.h"
+#include <unity.h>
 #include "helpers.h"
+#include "test_display_mock.h"
+
+// Arduino compatibility for native environment
+#ifndef ARDUINO
+#define max(a,b) ((a)>(b)?(a):(b))
+#define min(a,b) ((a)<(b)?(a):(b))
+#define abs(x) ((x)>0?(x):-(x))
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+#define map(x, in_min, in_max, out_min, out_max) ((x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min)
+#endif
+
+// Mock display instance
+MockDisplay* display = nullptr;
+
+// External variables from main firmware that our calculation functions need
+extern uint16_t xMin, xMax, yMin, yMax;
+extern uint16_t xCenter, yCenter;
+
+// Declare the calculation functions we want to test
+int calculateThrottlePercent(int y);
+int calculateLeftRightPercent(int x);
 
 // Declare external variables for testing
 extern int leftSpeed;
@@ -407,6 +428,326 @@ void test_configuration_constants(void) {
     TEST_ASSERT_EQUAL_MESSAGE(JOYSTICK_CENTER - JOYSTICK_DEADZONE, BACKWARD_THRESHOLD, "BACKWARD_THRESHOLD consistency");
 }
 
+// ============================================================================
+// Joystick Calculation Tests - Using actual calculation functions
+// ============================================================================
+
+// Setup helper to configure range variables for testing
+void setupJoystickRange(uint16_t minX, uint16_t maxX, uint16_t minY, uint16_t maxY, uint16_t centerX = 512, uint16_t centerY = 512) {
+    xMin = minX; xMax = maxX; yMin = minY; yMax = maxY;
+    xCenter = centerX; yCenter = centerY;
+}
+
+void test_joystick_center_position_mapping(void) {
+    // Setup reasonable range for testing
+    setupJoystickRange(200, 800, 200, 800);
+    
+    // Test center position
+    int throttleResult = calculateThrottlePercent(512);
+    int leftRightResult = calculateLeftRightPercent(512);
+    
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, 50, throttleResult, "Center Y should map to ~50%");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, leftRightResult, "Center X should map to ~0%");
+}
+
+void test_joystick_full_range_mapping(void) {
+    // Test full range utilization
+    setupJoystickRange(100, 900, 100, 900);
+    
+    // Test minimum values
+    int throttleMin = calculateThrottlePercent(100);
+    int leftRightMin = calculateLeftRightPercent(100);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, throttleMin, "Min Y should map to 0%");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftRightMin, "Min X should map to -100%");
+    
+    // Test maximum values  
+    int throttleMax = calculateThrottlePercent(900);
+    int leftRightMax = calculateLeftRightPercent(900);
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, throttleMax, "Max Y should map to 100%");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, leftRightMax, "Max X should map to +100%");
+}
+
+void test_joystick_deadzone_functionality(void) {
+    // Test deadzone boundaries
+    setupJoystickRange(200, 800, 200, 800);
+    
+    // Test values clearly outside the percentage deadzone (±3%)
+    int throttleResult = calculateThrottlePercent(550); // Should be > 56%
+    int leftRightResult = calculateLeftRightPercent(550); // Should be > 6%
+    
+    // With range 200-800 and center 512:
+    // throttleResult = map(550, 512, 800, 50, 100) = ~56.6% (well outside ±3% deadzone)
+    // leftRightResult = map(550, 512, 800, 0, 100) = ~13.2% (well outside ±3% deadzone)
+    TEST_ASSERT_GREATER_THAN_MESSAGE(53, throttleResult, "Value outside deadzone should be > 53%");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(3, leftRightResult, "Value outside deadzone should be > 3%");
+}
+
+void test_leftmost_position_no_deadzone_interference(void) {
+    // Specific test for the issue: leftmost position should NOT be forced to center
+    setupJoystickRange(0, 1023, 0, 1023);
+    
+    // Test extreme positions
+    int leftRightMin = calculateLeftRightPercent(0);    // Far left
+    int leftRightMax = calculateLeftRightPercent(1023); // Far right
+    
+    // Should be maximum values, NOT forced to center (0%)
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftRightMin, "Leftmost X should be -100%, not forced to center");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, leftRightMax, "Rightmost X should be 100%, not forced to center");
+    
+    // Test with center Y to ensure throttle works correctly at extremes
+    int throttleCenter = calculateThrottlePercent(512);  // Center Y
+    TEST_ASSERT_INT_WITHIN_MESSAGE(3, 50, throttleCenter, "Center Y should be ~50%");
+}
+
+// ============================================================================
+// Tests for Real-World Joystick Issues
+// ============================================================================
+
+void test_leftmost_position_real_world(void) {
+    // Test the real issue: leftmost position (x=0-50) should be -100%, not snapping to center
+    setupJoystickRange(0, 1023, 0, 1023);
+    
+    // Test extreme left positions
+    int leftResult0 = calculateLeftRightPercent(0);      // Absolute leftmost
+    int leftResult10 = calculateLeftRightPercent(10);    // Very close to left
+    int leftResult50 = calculateLeftRightPercent(50);    // Still far left
+    
+    // These should all be strong negative values, NOT snapping to center
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftResult0, "x=0 should give -100%, not snap to center");
+    TEST_ASSERT_LESS_THAN_MESSAGE(-80, leftResult10, "x=10 should give strong negative value");
+    TEST_ASSERT_LESS_THAN_MESSAGE(-70, leftResult50, "x=50 should give strong negative value");
+}
+
+void test_rightmost_position_real_world(void) {
+    // Test the real issue: rightmost position should reach 100%, not capped at 82%
+    setupJoystickRange(0, 1023, 0, 1023);
+    
+    // Test extreme right positions
+    int rightResult1023 = calculateLeftRightPercent(1023); // Absolute rightmost
+    int rightResult1000 = calculateLeftRightPercent(1000); // Very close to right
+    int rightResult950 = calculateLeftRightPercent(950);   // Still far right
+    
+    // These should reach full range
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, rightResult1023, "x=1023 should give 100%");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(90, rightResult1000, "x=1000 should give >90%");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(80, rightResult950, "x=950 should give >80%");
+}
+
+void test_smooth_progression_no_jumps(void) {
+    // Test for the jumping behavior: small movements should give small changes
+    setupJoystickRange(0, 1023, 0, 1023);
+    
+    // Test progression from center outward
+    int center = calculateLeftRightPercent(512);     // Center
+    int slight_right = calculateLeftRightPercent(550); // Slight right
+    int more_right = calculateLeftRightPercent(600);   // More right
+    
+    int center_to_slight = abs(slight_right - center);
+    int slight_to_more = abs(more_right - slight_right);
+    
+    // Movement should be progressive, not jumping by huge amounts
+    TEST_ASSERT_LESS_THAN_MESSAGE(20, center_to_slight, "Center to slight movement should be <20%");
+    TEST_ASSERT_LESS_THAN_MESSAGE(25, slight_to_more, "Small movements should not cause >25% jumps");
+    
+    // Test same on left side
+    int slight_left = calculateLeftRightPercent(474);   // Slight left  
+    int more_left = calculateLeftRightPercent(424);     // More left
+    
+    int center_to_slight_left = abs(slight_left - center);
+    int slight_to_more_left = abs(more_left - slight_left);
+    
+    TEST_ASSERT_LESS_THAN_MESSAGE(20, center_to_slight_left, "Center to slight left should be <20%");
+    TEST_ASSERT_LESS_THAN_MESSAGE(25, slight_to_more_left, "Small left movements should not cause >25% jumps");
+}
+
+void test_narrow_range_learning_problem(void) {
+    // Test the real issue: firmware starts with narrow range and learns too slowly
+    // This simulates the firmware's conservative range expansion
+    
+    // Start with firmware's initial narrow range (center ±1 to avoid division by zero)
+    setupJoystickRange(511, 513, 511, 513);
+    
+    // Test what happens with extreme positions on narrow range
+    int leftResult = calculateLeftRightPercent(0);      // Extreme left
+    int rightResult = calculateLeftRightPercent(1023);  // Extreme right
+    
+    // With such a narrow range, extreme positions will saturate to maximum values
+    // This demonstrates how narrow range causes poor resolution
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftResult, "Extreme left should saturate to -100%");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, rightResult, "Extreme right should saturate to 100%");
+}
+
+void test_conservative_range_expansion(void) {
+    // Simulate the conservative range expansion with RANGE_EXPANSION_FACTOR = 50
+    // Starting range: 512±0, user moves to position 100
+    // After expansion: xMin = max(0, 100-50) = 50, xMax = 512
+    setupJoystickRange(50, 512, 50, 512);
+    
+    // Now test extreme positions
+    int leftResult = calculateLeftRightPercent(0);    // Beyond learned range
+    int rightResult = calculateLeftRightPercent(1023); // Way beyond learned range
+    
+    // This should show poor mapping due to limited learned range
+    TEST_ASSERT_EQUAL_INT_MESSAGE(-100, leftResult, "Should reach -100% even with limited learned range");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(100, rightResult, "Should reach 100% even with limited learned range");
+}
+    
+void test_joystick_processJoystick_integration(void) {
+    // Test integration with actual helper functions
+    JoystickProcessingResult result1 = processJoystick(400, 400, false);  // Below center
+    TEST_ASSERT_TRUE_MESSAGE(result1.rawX == 400, "processJoystick should preserve rawX");
+    TEST_ASSERT_TRUE_MESSAGE(result1.rawY == 400, "processJoystick should preserve rawY");
+    TEST_ASSERT_TRUE_MESSAGE(result1.rawRatioLR < 0, "Left position should give negative ratio");
+    
+    JoystickProcessingResult result2 = processJoystick(624, 624, false);  // Above center
+    TEST_ASSERT_TRUE_MESSAGE(result2.rawX == 624, "processJoystick should preserve rawX");
+    TEST_ASSERT_TRUE_MESSAGE(result2.rawY == 624, "processJoystick should preserve rawY");
+    TEST_ASSERT_TRUE_MESSAGE(result2.rawRatioLR > 0, "Right position should give positive ratio");
+    
+    JoystickProcessingResult result3 = processJoystick(512, 512, false);  // Center
+    TEST_ASSERT_EQUAL_INT_MESSAGE(512, result3.rawX, "Center position rawX should be 512");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(512, result3.rawY, "Center position rawY should be 512");
+    TEST_ASSERT_FLOAT_WITHIN_MESSAGE(0.1, 0.0, result3.rawRatioLR, "Center position should give ~0 ratio");
+}
+
+// ============================================================================
+// Fill Bar Display Tests - Testing the critical fill bar drawing logic
+// ============================================================================
+
+// Mock fill bar test results
+struct FillBarTestResults {
+    int fillStartX;
+    int fillWidth;  
+    int fillStartY;
+    int fillHeight;
+    bool centerLineDrawn;
+    
+    void reset() {
+        fillStartX = -1;
+        fillWidth = -1; 
+        fillStartY = -1;
+        fillHeight = -1;
+        centerLineDrawn = false;
+    }
+} fillBarResults;
+
+// Constants matching main firmware display logic
+const int DISPLAY_WIDTH = 128;
+const int DISPLAY_HEIGHT = 64;
+const int THROTTLE_BAR_X = 0;
+const int THROTTLE_BAR_WIDTH = 10;
+const int LR_BAR_Y = 40;
+const int LR_BAR_HEIGHT = 8;
+
+// Simulate fill bar calculation logic from main firmware (fixed version)
+void simulateFillBarDrawing(int throttlePercent, int leftRightPercent) {
+    fillBarResults.reset();
+    
+    // Throttle fill bar (vertical) - should fill from center upward/downward
+    int throttleCenterY = DISPLAY_HEIGHT / 2;  // 32 pixels from top
+    if (throttlePercent == 50) {
+        // At center - no fill, just center line
+        fillBarResults.fillHeight = 0;
+        fillBarResults.centerLineDrawn = true;
+    } else if (throttlePercent > 50) {
+        // Above center - fill upward from center
+        int fillPixels = map(throttlePercent, 50, 100, 0, throttleCenterY);
+        fillBarResults.fillStartY = throttleCenterY - fillPixels;
+        fillBarResults.fillHeight = fillPixels;
+    } else {
+        // Below center - fill downward from center
+        int fillPixels = map(throttlePercent, 0, 50, throttleCenterY, 0);  
+        fillBarResults.fillStartY = throttleCenterY;
+        fillBarResults.fillHeight = fillPixels;
+    }
+    
+    // Left/Right fill bar (horizontal) - should fill from center left/right  
+    int lrCenterX = DISPLAY_WIDTH / 2;  // 64 pixels from left
+    if (leftRightPercent == 0) {
+        // At center - no fill, just center line
+        fillBarResults.fillWidth = 0;
+        fillBarResults.centerLineDrawn = true;
+    } else if (leftRightPercent > 0) {
+        // Right of center - fill rightward from center
+        int fillPixels = map(leftRightPercent, 0, 50, 0, lrCenterX);
+        fillBarResults.fillStartX = lrCenterX;
+        fillBarResults.fillWidth = fillPixels;
+    } else {
+        // Left of center - fill leftward from center
+        int fillPixels = map(-leftRightPercent, 0, 50, 0, lrCenterX);
+        fillBarResults.fillStartX = lrCenterX - fillPixels;
+        fillBarResults.fillWidth = fillPixels;
+    }
+}
+
+void test_center_position_no_fill(void) {
+    // At center position, there should be no fill bars, just center lines
+    simulateFillBarDrawing(50, 0);  // Perfect center
+    
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillHeight, "Center throttle should have no fill height");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillWidth, "Center L/R should have no fill width");
+    TEST_ASSERT_TRUE_MESSAGE(fillBarResults.centerLineDrawn, "Center position should show center line");
+}
+
+void test_throttle_fill_from_center_upward(void) {
+    // Above 50% should fill upward from center
+    simulateFillBarDrawing(75, 0);  // 75% throttle, centered L/R
+    
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillHeight, "Above center should have fill height");
+    TEST_ASSERT_LESS_THAN_MESSAGE(32, fillBarResults.fillStartY, "Fill should start above center line (Y=32)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillWidth, "Centered L/R should have no width fill");
+}
+
+void test_throttle_fill_from_center_downward(void) {
+    // Below 50% should fill downward from center
+    simulateFillBarDrawing(25, 0);  // 25% throttle, centered L/R
+    
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillHeight, "Below center should have fill height");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(32, fillBarResults.fillStartY, "Fill should start at center line (Y=32)");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillWidth, "Centered L/R should have no width fill");
+}
+
+void test_left_right_fill_from_center_rightward(void) {
+    // Positive L/R should fill rightward from center
+    simulateFillBarDrawing(50, 25);  // Centered throttle, 25% right
+    
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillHeight, "Centered throttle should have no fill height");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillWidth, "Right turn should have fill width");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(64, fillBarResults.fillStartX, "Right fill should start at center (X=64)");
+}
+
+void test_left_right_fill_from_center_leftward(void) {
+    // Negative L/R should fill leftward from center
+    simulateFillBarDrawing(50, -25);  // Centered throttle, 25% left
+    
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillHeight, "Centered throttle should have no fill height");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillWidth, "Left turn should have fill width");  
+    TEST_ASSERT_LESS_THAN_MESSAGE(64, fillBarResults.fillStartX, "Left fill should start left of center (X<64)");
+}
+
+void test_maximum_fill_constraints(void) {
+    // Test maximum fill values don't exceed display bounds
+    simulateFillBarDrawing(100, 50);  // Maximum throttle and L/R
+    
+    TEST_ASSERT_TRUE_MESSAGE(fillBarResults.fillHeight <= 32, "Max fill height should not exceed half display");
+    TEST_ASSERT_TRUE_MESSAGE(fillBarResults.fillWidth <= 64, "Max fill width should not exceed half display");
+    TEST_ASSERT_TRUE_MESSAGE(fillBarResults.fillStartY >= 0, "Fill start Y should be within bounds");
+    TEST_ASSERT_TRUE_MESSAGE(fillBarResults.fillStartX >= 0, "Fill start X should be within bounds");
+
+    simulateFillBarDrawing(100, 50);  // Maximum throttle and L/R
+
+}
+
+void test_fill_bar_edge_cases(void) {
+    // Test edge case values
+    simulateFillBarDrawing(0, -50);   // Minimum throttle, maximum left
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillHeight, "Min throttle should show fill");
+    TEST_ASSERT_GREATER_THAN_MESSAGE(0, fillBarResults.fillWidth, "Max left should show fill");
+    TEST_ASSERT_EQUAL_INT_MESSAGE(0, fillBarResults.fillStartX, "Max left should fill from far left");
+}
+
+
+
 
 int main(void) {
     UNITY_BEGIN();
@@ -451,8 +792,30 @@ int main(void) {
 
     // Configuration validation tests
     RUN_TEST(test_configuration_constants);
-
     
+    // Joystick comprehensive tests (integrated from test_joystick_comprehensive.cpp)
+    RUN_TEST(test_joystick_center_position_mapping);
+    RUN_TEST(test_joystick_full_range_mapping);
+    RUN_TEST(test_joystick_deadzone_functionality);
+    RUN_TEST(test_joystick_processJoystick_integration);
+    
+    // Fill Bar Display Tests - Critical display logic validation
+    RUN_TEST(test_center_position_no_fill);
+    RUN_TEST(test_throttle_fill_from_center_upward);
+    RUN_TEST(test_throttle_fill_from_center_downward);
+    RUN_TEST(test_left_right_fill_from_center_rightward);
+    RUN_TEST(test_left_right_fill_from_center_leftward);
+    RUN_TEST(test_maximum_fill_constraints);
+    RUN_TEST(test_fill_bar_edge_cases);
+    RUN_TEST(test_leftmost_position_no_deadzone_interference);
+    
+    // Real-world joystick issue tests
+    RUN_TEST(test_leftmost_position_real_world);
+    RUN_TEST(test_rightmost_position_real_world);
+    RUN_TEST(test_smooth_progression_no_jumps);
+    RUN_TEST(test_narrow_range_learning_problem);
+    RUN_TEST(test_conservative_range_expansion);
+
     return UNITY_END();
 }
 

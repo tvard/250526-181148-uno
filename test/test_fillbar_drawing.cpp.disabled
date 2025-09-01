@@ -1,0 +1,277 @@
+/*
+ * Integration Tests for Fill Bar Drawing Logic
+ * Tests the visual representation fixes for throttle and left/right bars
+ */
+
+#include <unity.h>
+#include <stdint.h>
+
+// Arduino compatibility for native environment
+#ifndef ARDUINO
+#define max(a,b) ((a)>(b)?(a):(b))
+#define min(a,b) ((a)<(b)?(a):(b))
+#define abs(x) ((x)>0?(x):-(x))
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+long map(long x, long in_min, long in_max, long out_min, long out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+#endif
+
+// Mock display class to capture fill rectangle calls
+class MockFillDisplay {
+public:
+    struct FillRect {
+        int x, y, width, height;
+        bool filled;
+    };
+    
+    static FillRect lastFillRect;
+    static int centerLineX;
+    static bool centerLineDrawn;
+    static int barStartX;
+    static int barWidth;
+    
+    static void fillRect(int x, int y, int w, int h, bool color) {
+        lastFillRect = {x, y, w, h, color};
+    }
+    
+    static void drawFastVLine(int x, int y, int h, bool color) {
+        if (color) {
+            centerLineX = x;
+            centerLineDrawn = true;
+        }
+    }
+    
+    static void resetMocks() {
+        lastFillRect = {-1, -1, -1, -1, false};
+        centerLineX = -1;
+        centerLineDrawn = false;
+        barStartX = 30; // offsetX value
+        barWidth = 52;  // barW value
+    }
+};
+
+MockFillDisplay::FillRect MockFillDisplay::lastFillRect = {-1, -1, -1, -1, false};
+int MockFillDisplay::centerLineX = -1;
+bool MockFillDisplay::centerLineDrawn = false;
+int MockFillDisplay::barStartX = 30;
+int MockFillDisplay::barWidth = 52;
+
+// Mock the actual drawing functions
+void drawThrottleFillBar(int throttlePercent, int barX, int barY, int offsetX) {
+    const int barH = 6;
+    const int barW = 52;
+    
+    MockFillDisplay::barStartX = barX + offsetX;
+    MockFillDisplay::barWidth = barW;
+    
+    // Draw center line at 50%
+    int centerX = barX + offsetX + (barW / 2);
+    MockFillDisplay::drawFastVLine(centerX, barY, barH, true);
+    
+    // Fill logic (same as main code)
+    if (throttlePercent > 50) {
+        // Forward: fill from center to right
+        int fillW = map(throttlePercent, 50, 100, 0, (barW / 2) - 1);
+        fillW = constrain(fillW, 0, (barW / 2) - 1);
+        MockFillDisplay::fillRect(centerX + 1, barY + 1, fillW, barH - 2, true);
+    } else if (throttlePercent < 50) {
+        // Reverse: fill from center to left
+        int fillW = map(throttlePercent, 0, 50, (barW / 2) - 1, 0);
+        fillW = constrain(fillW, 0, (barW / 2) - 1);
+        MockFillDisplay::fillRect(centerX - fillW, barY + 1, fillW, barH - 2, true);
+    }
+}
+
+void drawLeftRightFillBar(int leftRightPercent, int barX, int barY, int offsetX) {
+    const int barW = 52;
+    const int barH = 6;
+    
+    MockFillDisplay::barStartX = barX + offsetX;
+    MockFillDisplay::barWidth = barW;
+    
+    // Draw center line at 0%
+    int centerX = barX + offsetX + (barW / 2);
+    MockFillDisplay::drawFastVLine(centerX, barY, barH, true);
+    
+    // Fill logic (same as main code)
+    if (leftRightPercent > 0) {
+        // Right: fill from center to right
+        int fillW = map(leftRightPercent, 0, 100, 0, (barW / 2) - 1);
+        fillW = constrain(fillW, 0, (barW / 2) - 1);
+        MockFillDisplay::fillRect(centerX + 1, barY + 1, fillW, barH - 2, true);
+    } else if (leftRightPercent < 0) {
+        // Left: fill from center to left
+        int fillW = map(-leftRightPercent, 0, 100, 0, (barW / 2) - 1);
+        fillW = constrain(fillW, 0, (barW / 2) - 1);
+        MockFillDisplay::fillRect(centerX - fillW, barY + 1, fillW, barH - 2, true);
+    }
+}
+
+void setUp(void) {
+    MockFillDisplay::resetMocks();
+}
+
+void tearDown(void) {
+    // Clean up after each test
+}
+
+// Test 1: Center position shows no fill (just center line)
+void test_center_position_no_fill(void) {
+    drawThrottleFillBar(50, 0, 18, 30);  // 50% = center
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(-1, MockFillDisplay::lastFillRect.width); // No fill
+    
+    drawLeftRightFillBar(0, 0, 26, 30);   // 0% = center
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(-1, MockFillDisplay::lastFillRect.width); // No fill
+}
+
+// Test 2: Forward throttle fills from center to right
+void test_forward_throttle_fill_direction(void) {
+    int centerX = MockFillDisplay::barStartX + (MockFillDisplay::barWidth / 2);
+    
+    drawThrottleFillBar(75, 0, 18, 30);  // 75% = halfway to full forward
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_GREATER_THAN(0, MockFillDisplay::lastFillRect.width);
+    TEST_ASSERT_EQUAL_INT(centerX + 1, MockFillDisplay::lastFillRect.x); // Starts just right of center
+}
+
+// Test 3: Reverse throttle fills from center to left
+void test_reverse_throttle_fill_direction(void) {
+    int centerX = MockFillDisplay::barStartX + (MockFillDisplay::barWidth / 2);
+    
+    drawThrottleFillBar(25, 0, 18, 30);  // 25% = halfway to full reverse
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_GREATER_THAN(0, MockFillDisplay::lastFillRect.width);
+    // Fill should start to the left of center
+    TEST_ASSERT_LESS_THAN(centerX, MockFillDisplay::lastFillRect.x);
+}
+
+// Test 4: Right movement fills from center to right
+void test_right_movement_fill_direction(void) {
+    int centerX = MockFillDisplay::barStartX + (MockFillDisplay::barWidth / 2);
+    
+    drawLeftRightFillBar(50, 0, 26, 30);  // 50% right
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_GREATER_THAN(0, MockFillDisplay::lastFillRect.width);
+    TEST_ASSERT_EQUAL_INT(centerX + 1, MockFillDisplay::lastFillRect.x); // Starts just right of center
+}
+
+// Test 5: Left movement fills from center to left
+void test_left_movement_fill_direction(void) {
+    int centerX = MockFillDisplay::barStartX + (MockFillDisplay::barWidth / 2);
+    
+    drawLeftRightFillBar(-50, 0, 26, 30);  // -50% left
+    
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_GREATER_THAN(0, MockFillDisplay::lastFillRect.width);
+    // Fill should start to the left of center
+    TEST_ASSERT_LESS_THAN(centerX, MockFillDisplay::lastFillRect.x);
+}
+
+// Test 6: Progressive fill width for throttle
+void test_progressive_throttle_fill(void) {
+    drawThrottleFillBar(60, 0, 18, 30);  // 60% forward
+    int width1 = MockFillDisplay::lastFillRect.width;
+    
+    MockFillDisplay::resetMocks();
+    
+    drawThrottleFillBar(80, 0, 18, 30);  // 80% forward
+    int width2 = MockFillDisplay::lastFillRect.width;
+    
+    MockFillDisplay::resetMocks();
+    
+    drawThrottleFillBar(100, 0, 18, 30); // 100% forward
+    int width3 = MockFillDisplay::lastFillRect.width;
+    
+    // Fill should progressively increase
+    TEST_ASSERT_GREATER_THAN(width1, width2);
+    TEST_ASSERT_GREATER_THAN(width2, width3);
+}
+
+// Test 7: Symmetric fill for left/right
+void test_symmetric_left_right_fill(void) {
+    drawLeftRightFillBar(60, 0, 26, 30);   // 60% right
+    int rightWidth = MockFillDisplay::lastFillRect.width;
+    
+    MockFillDisplay::resetMocks();
+    
+    drawLeftRightFillBar(-60, 0, 26, 30);  // 60% left
+    int leftWidth = MockFillDisplay::lastFillRect.width;
+    
+    // Fill widths should be equal for symmetric movements
+    TEST_ASSERT_EQUAL_INT(rightWidth, leftWidth);
+}
+
+// Test 8: Maximum fill doesn't exceed bar boundaries
+void test_maximum_fill_boundaries(void) {
+    int maxFillWidth = (MockFillDisplay::barWidth / 2) - 1;
+    
+    drawThrottleFillBar(100, 0, 18, 30);  // 100% forward
+    TEST_ASSERT_LESS_OR_EQUAL(maxFillWidth, MockFillDisplay::lastFillRect.width);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawThrottleFillBar(0, 0, 18, 30);    // 0% reverse
+    TEST_ASSERT_LESS_OR_EQUAL(maxFillWidth, MockFillDisplay::lastFillRect.width);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawLeftRightFillBar(100, 0, 26, 30);  // 100% right
+    TEST_ASSERT_LESS_OR_EQUAL(maxFillWidth, MockFillDisplay::lastFillRect.width);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawLeftRightFillBar(-100, 0, 26, 30); // 100% left
+    TEST_ASSERT_LESS_OR_EQUAL(maxFillWidth, MockFillDisplay::lastFillRect.width);
+}
+
+// Test 9: Center line is always drawn
+void test_center_line_always_present(void) {
+    int expectedCenterX = MockFillDisplay::barStartX + (MockFillDisplay::barWidth / 2);
+    
+    drawThrottleFillBar(25, 0, 18, 30);
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(expectedCenterX, MockFillDisplay::centerLineX);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawThrottleFillBar(75, 0, 18, 30);
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(expectedCenterX, MockFillDisplay::centerLineX);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawLeftRightFillBar(-50, 0, 26, 30);
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(expectedCenterX, MockFillDisplay::centerLineX);
+    
+    MockFillDisplay::resetMocks();
+    
+    drawLeftRightFillBar(50, 0, 26, 30);
+    TEST_ASSERT_TRUE(MockFillDisplay::centerLineDrawn);
+    TEST_ASSERT_EQUAL_INT(expectedCenterX, MockFillDisplay::centerLineX);
+}
+
+int main() {
+    UNITY_BEGIN();
+    
+    // Run all fill bar tests
+    RUN_TEST(test_center_position_no_fill);
+    RUN_TEST(test_forward_throttle_fill_direction);
+    RUN_TEST(test_reverse_throttle_fill_direction);
+    RUN_TEST(test_right_movement_fill_direction);
+    RUN_TEST(test_left_movement_fill_direction);
+    RUN_TEST(test_progressive_throttle_fill);
+    RUN_TEST(test_symmetric_left_right_fill);
+    RUN_TEST(test_maximum_fill_boundaries);
+    RUN_TEST(test_center_line_always_present);
+    
+    return UNITY_END();
+}

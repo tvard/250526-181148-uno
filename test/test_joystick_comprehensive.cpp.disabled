@@ -1,0 +1,387 @@
+/*
+ * Comprehensive Unit Tests for Joystick Mapping and Display Fixes
+ * Integrates with existing helpers.h functions and covers the conversation history fixes
+ */
+
+#include <unity.h>
+#include <stdint.h>
+#include "helpers.h"
+
+// Arduino compatibility for native environment
+#ifndef ARDUINO
+#define max(a,b) ((a)>(b)?(a):(b))
+#define min(a,b) ((a)<(b)?(a):(b))
+#define abs(x) ((x)>0?(x):-(x))
+#define constrain(amt,low,high) ((amt)<(low)?(low):((amt)>(high)?(high):(amt)))
+
+// Use a different name to avoid conflicts with helpers.h map function
+long display_map(long x, long in_min, long in_max, long out_min, long out_max) {
+    return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min;
+}
+#endif
+
+#ifdef ARDUINO
+// On Arduino, use Arduino's built-in map function
+#define display_map map
+#endif
+
+// Test constants and variables from the main code
+const uint16_t RANGE_EXPANSION_FACTOR = 50;
+uint16_t xMin, xMax, yMin, yMax;
+uint16_t xCenter = 512, yCenter = 512;
+
+// Mock results for testing display functions
+struct TestResults {
+    int throttlePercent;
+    int leftRightPercent;
+    int fillStartX;
+    int fillWidth;
+    bool centerLineDrawn;
+    
+    void reset() {
+        throttlePercent = -1;
+        leftRightPercent = 999;
+        fillStartX = -1;
+        fillWidth = -1;
+        centerLineDrawn = false;
+    }
+} testResults;
+
+// Simulate joystick mapping logic from main code
+void simulateJoystickMapping(uint16_t x, uint16_t y) {
+    // Update dynamic range tracking
+    if (x < xMin) {
+        xMin = max(0, (int)x - RANGE_EXPANSION_FACTOR);
+    }
+    if (x > xMax) {
+        xMax = min(1023, (int)x + RANGE_EXPANSION_FACTOR);
+    }
+    if (y < yMin) {
+        yMin = max(0, (int)y - RANGE_EXPANSION_FACTOR);
+    }
+    if (y > yMax) {
+        yMax = min(1023, (int)y + RANGE_EXPANSION_FACTOR);
+    }
+
+    // Throttle calculation
+    if (abs((int)y - (int)yCenter) < 15) {
+        testResults.throttlePercent = 50;
+    } else if (y > yCenter) {
+        testResults.throttlePercent = display_map(y, yCenter, yMax, 50, 100);
+    } else {
+        testResults.throttlePercent = display_map(y, yMin, yCenter, 0, 50);
+    }
+    testResults.throttlePercent = constrain(testResults.throttlePercent, 0, 100);
+
+    // Left/Right calculation
+    if (abs((int)x - (int)xCenter) < 15) {
+        testResults.leftRightPercent = 0;
+    } else if (x > xCenter) {
+        testResults.leftRightPercent = display_map(x, xCenter, xMax, 0, 100);
+    } else {
+        testResults.leftRightPercent = display_map(x, xMin, xCenter, -100, 0);
+    }
+    testResults.leftRightPercent = constrain(testResults.leftRightPercent, -100, 100);
+}
+
+void setUp(void) {
+    // Reset test state before each test
+    testResults.reset();
+    xCenter = 512;
+    yCenter = 512;
+    
+    // Initialize range with reasonable starting values
+    xMin = max(0, (int)xCenter - 200);
+    xMax = min(1023, (int)xCenter + 200);
+    yMin = max(0, (int)yCenter - 200);
+    yMax = min(1023, (int)yCenter + 200);
+}
+
+void tearDown(void) {
+    // Clean up after each test
+}
+
+// ============ JOYSTICK MAPPING TESTS ============
+
+void test_center_position_mapping(void) {
+    simulateJoystickMapping(512, 512);
+    
+    TEST_ASSERT_EQUAL_INT(50, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(0, testResults.leftRightPercent);
+}
+
+void test_full_range_mapping(void) {
+    // Test full forward
+    simulateJoystickMapping(512, 1023);
+    TEST_ASSERT_EQUAL_INT(100, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(0, testResults.leftRightPercent);
+    
+    // Test full reverse
+    simulateJoystickMapping(512, 0);
+    TEST_ASSERT_EQUAL_INT(0, testResults.throttlePercent);
+    
+    // Test full right
+    simulateJoystickMapping(1023, 512);
+    TEST_ASSERT_EQUAL_INT(50, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(100, testResults.leftRightPercent);
+    
+    // Test full left
+    simulateJoystickMapping(0, 512);
+    TEST_ASSERT_EQUAL_INT(-100, testResults.leftRightPercent);
+}
+
+void test_range_expansion(void) {
+    uint16_t initialXMax = xMax;
+    uint16_t initialYMax = yMax;
+    
+    // Simulate reading beyond current range
+    simulateJoystickMapping(800, 800);
+    
+    // Range should have expanded
+    TEST_ASSERT_GREATER_THAN(initialXMax, xMax);
+    TEST_ASSERT_GREATER_THAN(initialYMax, yMax);
+}
+
+void test_deadzone_functionality(void) {
+    // Test values within deadzone
+    simulateJoystickMapping(512 + 10, 512 - 10);
+    TEST_ASSERT_EQUAL_INT(50, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(0, testResults.leftRightPercent);
+    
+    // Test values outside deadzone
+    simulateJoystickMapping(512 + 20, 512 + 20);
+    TEST_ASSERT_NOT_EQUAL(50, testResults.throttlePercent);
+    TEST_ASSERT_NOT_EQUAL(0, testResults.leftRightPercent);
+}
+
+void test_gradual_progression(void) {
+    // Test incremental throttle movement with proper range setup
+    // First, establish a wider range by simulating extreme movements
+    simulateJoystickMapping(200, 200);   // Expand to lower range
+    simulateJoystickMapping(800, 800);   // Expand to upper range
+    simulateJoystickMapping(512, 512);   // Return to center
+    
+    // Now test incremental movements
+    simulateJoystickMapping(512, 600);
+    int throttle1 = testResults.throttlePercent;
+    
+    simulateJoystickMapping(512, 700);
+    int throttle2 = testResults.throttlePercent;
+    
+    simulateJoystickMapping(512, 800);
+    int throttle3 = testResults.throttlePercent;
+    
+    // Should show progression (allowing for range-dependent calculations)
+    TEST_ASSERT_GREATER_THAN(50, throttle1);
+    TEST_ASSERT_GREATER_OR_EQUAL(throttle1, throttle2);
+    TEST_ASSERT_GREATER_OR_EQUAL(throttle2, throttle3);
+    
+    // At least the final value should be significantly higher than first
+    TEST_ASSERT_GREATER_THAN(throttle1 + 5, throttle3);
+}
+
+void test_symmetric_behavior(void) {
+    // Test equal magnitude movements
+    simulateJoystickMapping(400, 512);
+    int leftPercent = testResults.leftRightPercent;
+    
+    simulateJoystickMapping(624, 512);
+    int rightPercent = testResults.leftRightPercent;
+    
+    // Should be symmetric (approximately)
+    TEST_ASSERT_EQUAL_INT(-leftPercent, rightPercent);
+}
+
+// ============ FILL BAR LOGIC TESTS ============
+
+void test_fill_bar_center_calculation(void) {
+    const int barW = 52;
+    const int offsetX = 30;
+    const int barX = 0;
+    
+    int expectedCenterX = barX + offsetX + (barW / 2);
+    int actualCenterX = 0 + 30 + (52 / 2);
+    
+    TEST_ASSERT_EQUAL_INT(56, actualCenterX);  // Should be at position 56
+}
+
+void test_throttle_fill_width_calculation(void) {
+    // Test forward throttle (75% = 25% above center)
+    int fillW = display_map(75, 50, 100, 0, (52 / 2) - 1);
+    TEST_ASSERT_GREATER_OR_EQUAL(12, fillW);  // Allow for rounding differences
+    TEST_ASSERT_LESS_OR_EQUAL(14, fillW);
+    
+    // Test reverse throttle (25% = 25% below center)
+    int fillW_reverse = display_map(25, 0, 50, (52 / 2) - 1, 0);
+    TEST_ASSERT_GREATER_OR_EQUAL(12, fillW_reverse);  // Allow for rounding differences
+    TEST_ASSERT_LESS_OR_EQUAL(14, fillW_reverse);
+}
+
+void test_left_right_fill_width_calculation(void) {
+    // Test right movement (50% = half of max)
+    int fillW = display_map(50, 0, 100, 0, (52 / 2) - 1);
+    TEST_ASSERT_EQUAL_INT(12, fillW);  // Should be about halfway to max fill
+    
+    // Test left movement (-50% = half of max in opposite direction)
+    int fillW_left = display_map(50, 0, 100, 0, (52 / 2) - 1);  // Same calculation for magnitude
+    TEST_ASSERT_EQUAL_INT(12, fillW_left);  // Should be same width
+}
+
+void test_maximum_fill_constraints(void) {
+    const int maxFillWidth = (52 / 2) - 1;  // barW/2 - 1 = 25
+    
+    // Test extreme values don't exceed maximum
+    int fillW_max = display_map(100, 50, 100, 0, maxFillWidth);
+    TEST_ASSERT_EQUAL_INT(maxFillWidth, fillW_max);
+    
+    int fillW_extreme = constrain(fillW_max, 0, maxFillWidth);
+    TEST_ASSERT_LESS_OR_EQUAL(maxFillWidth, fillW_extreme);
+}
+
+// ============ ISSUE REGRESSION TESTS ============
+
+void test_no_center_drift(void) {
+    // Test that center remains stable after movement
+    uint16_t originalXCenter = xCenter;
+    uint16_t originalYCenter = yCenter;
+    
+    // Move joystick around
+    simulateJoystickMapping(100, 100);
+    simulateJoystickMapping(900, 900);
+    simulateJoystickMapping(512, 512);
+    
+    // Center should remain unchanged
+    TEST_ASSERT_EQUAL_INT(originalXCenter, xCenter);
+    TEST_ASSERT_EQUAL_INT(originalYCenter, yCenter);
+    
+    // And return to center should show proper values
+    TEST_ASSERT_EQUAL_INT(50, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(0, testResults.leftRightPercent);
+}
+
+void test_no_instant_saturation(void) {
+    // Test that small movements don't immediately hit 100%
+    simulateJoystickMapping(512, 550);  // Small upward movement
+    TEST_ASSERT_LESS_THAN(100, testResults.throttlePercent);
+    TEST_ASSERT_GREATER_THAN(50, testResults.throttlePercent);
+    
+    simulateJoystickMapping(550, 512);  // Small rightward movement
+    TEST_ASSERT_LESS_THAN(100, testResults.leftRightPercent);
+    TEST_ASSERT_GREATER_THAN(0, testResults.leftRightPercent);
+}
+
+void test_aggressive_range_expansion(void) {
+    // Test that range expands beyond the actual value
+    simulateJoystickMapping(800, 800);
+    
+    // Should expand beyond the actual reading
+    TEST_ASSERT_GREATER_OR_EQUAL(800 + RANGE_EXPANSION_FACTOR, xMax);
+    TEST_ASSERT_GREATER_OR_EQUAL(800 + RANGE_EXPANSION_FACTOR, yMax);
+    
+    simulateJoystickMapping(200, 200);
+    
+    // Should expand below the actual reading
+    TEST_ASSERT_LESS_OR_EQUAL(200 - RANGE_EXPANSION_FACTOR, xMin);
+    TEST_ASSERT_LESS_OR_EQUAL(200 - RANGE_EXPANSION_FACTOR, yMin);
+}
+
+// ============ BOUNDARY AND EDGE CASE TESTS ============
+
+void test_extreme_boundary_values(void) {
+    // Test absolute limits
+    simulateJoystickMapping(0, 0);
+    TEST_ASSERT_EQUAL_INT(0, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(-100, testResults.leftRightPercent);
+    
+    simulateJoystickMapping(1023, 1023);
+    TEST_ASSERT_EQUAL_INT(100, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(100, testResults.leftRightPercent);
+}
+
+void test_deadzone_boundaries(void) {
+    // Test exact deadzone boundaries
+    simulateJoystickMapping(512 + 14, 512 + 14);  // Just inside deadzone
+    TEST_ASSERT_EQUAL_INT(50, testResults.throttlePercent);
+    TEST_ASSERT_EQUAL_INT(0, testResults.leftRightPercent);
+    
+    simulateJoystickMapping(512 + 15, 512 + 15);  // Just outside deadzone
+    TEST_ASSERT_NOT_EQUAL(50, testResults.throttlePercent);
+    TEST_ASSERT_NOT_EQUAL(0, testResults.leftRightPercent);
+}
+
+// Integration tests with helpers.h functions
+void test_processJoystick_integration(void) {
+    // Test integration with helper functions
+    JoystickProcessingResult result1 = processJoystick(400, 400, false);  // Below center
+    TEST_ASSERT_TRUE(result1.rawX == 400);
+    TEST_ASSERT_TRUE(result1.rawY == 400);
+    TEST_ASSERT_TRUE(result1.rawRatioLR < 0);  // Should be negative (left)
+    
+    JoystickProcessingResult result2 = processJoystick(624, 624, false);  // Above center
+    TEST_ASSERT_TRUE(result2.rawX == 624);
+    TEST_ASSERT_TRUE(result2.rawY == 624);
+    TEST_ASSERT_TRUE(result2.rawRatioLR > 0);  // Should be positive (right)
+    
+    JoystickProcessingResult result3 = processJoystick(512, 512, false);  // Center
+    TEST_ASSERT_EQUAL_INT(512, result3.rawX);
+    TEST_ASSERT_EQUAL_INT(512, result3.rawY);
+    TEST_ASSERT_FLOAT_WITHIN(0.1, 0.0, result3.rawRatioLR);  // Should be near zero
+}
+
+void test_motor_targets_integration(void) {
+    // Test motor target computation with proper function signature
+    JoystickProcessingResult js1;
+    js1.rawRatioLR = 0.5;  // Right turn
+    js1.steppedRatioLR = 0.5;
+    js1.rawX = 600;
+    js1.rawY = 600;
+    
+    MotorTargets targets1 = computeMotorTargets(js1, 0, 0);  // Right turn
+    // Just verify the function executes and returns valid data
+    TEST_ASSERT_TRUE(targets1.left >= -255 && targets1.left <= 255);
+    TEST_ASSERT_TRUE(targets1.right >= -255 && targets1.right <= 255);
+    
+    JoystickProcessingResult js2;
+    js2.rawRatioLR = -0.5;  // Left turn
+    js2.steppedRatioLR = -0.5;
+    js2.rawX = 400;
+    js2.rawY = 400;
+    
+    MotorTargets targets2 = computeMotorTargets(js2, 0, 0);  // Left turn
+    // Just verify the function executes and returns valid data  
+    TEST_ASSERT_TRUE(targets2.left >= -255 && targets2.left <= 255);
+    TEST_ASSERT_TRUE(targets2.right >= -255 && targets2.right <= 255);
+}
+
+int main() {
+    UNITY_BEGIN();
+    
+    // Core functionality tests
+    RUN_TEST(test_center_position_mapping);
+    RUN_TEST(test_full_range_mapping);
+    RUN_TEST(test_range_expansion);
+    RUN_TEST(test_deadzone_functionality);
+    RUN_TEST(test_gradual_progression);
+    RUN_TEST(test_symmetric_behavior);
+    
+    // Fill bar calculation tests
+    RUN_TEST(test_fill_bar_center_calculation);
+    RUN_TEST(test_throttle_fill_width_calculation);
+    RUN_TEST(test_left_right_fill_width_calculation);
+    RUN_TEST(test_maximum_fill_constraints);
+    
+    // Regression tests for specific issues
+    RUN_TEST(test_no_center_drift);
+    RUN_TEST(test_no_instant_saturation);
+    RUN_TEST(test_aggressive_range_expansion);
+    
+    // Boundary condition tests
+    RUN_TEST(test_extreme_boundary_values);
+    RUN_TEST(test_deadzone_boundaries);
+    
+    // Integration tests with helpers.h
+    RUN_TEST(test_processJoystick_integration);
+    RUN_TEST(test_motor_targets_integration);
+    
+    return UNITY_END();
+}
