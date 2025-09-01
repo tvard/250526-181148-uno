@@ -1,8 +1,11 @@
+#ifdef ARDUINO
 // Optimized version with memory-efficient NRF24L01 usage
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 #include <SPI.h>
 #include <RF24.h>
+#endif
+
 #include <helpers.h>
 
 // Pin definitions
@@ -355,54 +358,8 @@ float getSuccessRate() {
   return (float)count / PACKET_HISTORY_SIZE; // Success rate as a fraction
 }
 
-// Calculation functions (separated from display for testing)
-int calculateThrottlePercent(int y) {
-  float throttlePercent;
-  
-  // Use float math for better precision, especially important for small movements
-  if (y > yCenter) {
-    // Forward: map from center to max -> 50% to 100%
-    throttlePercent = 50.0f + ((float)(y - yCenter) / (float)(yMax - yCenter)) * 50.0f;
-  } else {
-    // Reverse: map from min to center -> 0% to 50%
-    throttlePercent = ((float)(y - yMin) / (float)(yCenter - yMin)) * 50.0f;
-  }
-  
-  // Very restrictive deadzone: only apply if BOTH percentage is tiny AND raw input is very close to center
-  // This should prevent any extreme positions from being snapped to center
-  bool nearCenterRaw = abs(y - (int)yCenter) < 15;  // Raw input within 15 ADC units of center (very tight)
-  bool nearCenterPercent = abs(throttlePercent - 50.0f) <= 2.0f;  // Percentage within 48%-52% (very tight)
-  
-  if (nearCenterRaw && nearCenterPercent) {
-    throttlePercent = 50.0f; // Only force to center if both conditions are true
-  }
-  
-  return constrain((int)round(throttlePercent), 0, 100);
-}
-
-int calculateLeftRightPercent(int x) {
-  float leftRightPercent;
-  
-  // Use float math for better precision, especially important for small movements
-  if (x > xCenter) {
-    // Right: map from center to max -> 0% to +100%
-    leftRightPercent = ((float)(x - xCenter) / (float)(xMax - xCenter)) * 100.0f;
-  } else {
-    // Left: map from min to center -> -100% to 0%
-    leftRightPercent = ((float)(x - xMin) / (float)(xCenter - xMin)) * 100.0f - 100.0f;
-  }
-  
-  // Very restrictive deadzone: only apply if BOTH percentage is tiny AND raw input is very close to center
-  // This should prevent any extreme positions from being snapped to center
-  bool nearCenterRaw = abs(x - (int)xCenter) < 15;  // Raw input within 15 ADC units of center (very tight)
-  bool nearCenterPercent = abs(leftRightPercent) <= 2.0f;  // Percentage within ±2% (very tight)
-  
-  if (nearCenterRaw && nearCenterPercent) {
-    leftRightPercent = 0.0f; // Only force to center if both conditions are true
-  }
-  
-  return constrain((int)round(leftRightPercent), -100, 100);
-}
+// ...existing code...
+#include "2WD_RC_TRANSMITTER_logic.h"
 
 void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate) {
   display->clearDisplay();

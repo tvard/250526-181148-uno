@@ -1,8 +1,9 @@
-// Optimized version with memory-efficient NRF24L01 usage
+#ifdef ARDUINO
 #include <Arduino.h>
 #include <Wire.h>
 #include <SPI.h>
 #include <RF24.h>
+#endif
 #include "helpers.h"
 #include "pitches.h"
 
@@ -394,6 +395,11 @@ void stopMotors() {
   digitalWrite(RIGHT_MOTOR_IN1, LOW);
   digitalWrite(RIGHT_MOTOR_IN2, LOW);
   analogWrite(RIGHT_MOTOR_EN, 0);
+}
+
+// Calculation functions (separated from display for testing)
+// ...existing code...
+#include "2WD_RC_RECEIVER_logic.h"
 }
 
 void beep(int duration) {
