@@ -191,10 +191,10 @@ void loop() {
   
   // Now handle manual mode (receiving and processing)
   manualMode();
-  
-  // Status reporting every 5 seconds
+
+  // Status reporting every n milliseconds
   static unsigned long lastStatusTime = 0;
-  if (millis() - lastStatusTime > 5000 || (radio && radio->available() && millis() - lastStatusTime > 1000)) {
+  if (millis() - lastStatusTime > 250) {
     printStatusReport();
     lastStatusTime = millis();
   }
@@ -427,61 +427,89 @@ void printStatusReport() {
   }
 
   // Radio status
-  Serial.print("Radio Status: ");
+  Serial.print("Radio:");
   if (radio && radio->isChipConnected()) {
-    Serial.print("Operational");
-    if (radio->available()) {
-      Serial.print(" | Bytes Available: YES");
-    } else {
-      Serial.print(" | Bytes Available: NO");
-    }
+    Serial.print(padString("OK", 4));
+    Serial.print(" | Data:");
+    Serial.print(radio->available() ? " YES" : "  NO");
     
     // Display success rate
     float successRate = getSuccessRate();
-    Serial.print(" | Packet Success Rate: ");
-    Serial.print(successRate * 100.0, 1);
+    Serial.print(" | Success:");
+    Serial.print(pad3s((int)(successRate * 100.0)));
     Serial.print("%");
     
   } else {
-    Serial.print("DISCONNECTED");
+    Serial.print("FAIL | Data:  -- | Success: --%");
   }
   
   // Current joystick values
-  Serial.print(" | Joystick - X: ");
-  Serial.print(joystickX);
-  Serial.print(", Y: ");
-  Serial.print(joystickY);
-  Serial.print(", Button: ");
-  Serial.print(joystickButton ? "PRESSED" : "Released");
+  Serial.print(" | JS X:");
+  Serial.print(pad3s(joystickX));
+  Serial.print(" Y:");
+  Serial.print(pad3s(joystickY));
+  Serial.print(" Btn:");
+  Serial.print(joystickButton ? " ON" : "OFF");
 
-  // voltage
-  Serial.print(" | RX Voltage: ");
-  // Calculate actual battery voltage using shared calibration constants
+  // Motor speeds
+  Serial.print(" | Motors L:");
+  Serial.print(pad4s(leftSpeed));
+  Serial.print(" R:");
+  Serial.print(pad4s(rightSpeed));
+  
+  // Direction indicator
+  Serial.print(" Dir:");
+  String direction;
+  if (leftSpeed == 0 && rightSpeed == 0) {
+    direction = "STOP";
+  } else if (leftSpeed > 0 && rightSpeed > 0) {
+    direction = "FWD";
+  } else if (leftSpeed < 0 && rightSpeed < 0) {
+    direction = "REV";
+  } else if (leftSpeed > rightSpeed) {
+    direction = "LEFT";
+  } else if (rightSpeed > leftSpeed) {
+    direction = "RIGHT";
+  } else {
+    direction = "MIX";
+  }
+  Serial.print(padString(direction, 6));
+  
+  // L/R Ratio
+  Serial.print(" Ratio:");
+  if (abs(leftSpeed) == 0 && abs(rightSpeed) == 0) {
+    Serial.print(padString("--", 6));
+  } else if (rightSpeed == 0) {
+    Serial.print(padString("L-only", 6));
+  } else if (leftSpeed == 0) {
+    Serial.print(padString("R-only", 6));
+  } else {
+    float ratio = (float)leftSpeed / rightSpeed;
+    Serial.print(padString(String(ratio), 6));
+  }
+
+  // Voltage
+  Serial.print(" | Bat:");
   float adcValue = analogRead(VOLTAGE_ADC_PIN);
-  float adcVoltage = adcValue * VOLTAGE_ADC_REFERENCE / 1023.0; // Convert ADC reading to voltage at pin
-  float batteryVoltage = adcVoltage * (VOLTAGE_CALIBRATION_BATTERY / VOLTAGE_CALIBRATION_ADC_PIN); // Scale to actual battery voltage
-  Serial.print(batteryVoltage, 2);
+  float batteryVoltage = (adcValue * VOLTAGE_ADC_REFERENCE * VOLTAGE_CALIBRATION_BATTERY) / (1023.0 * VOLTAGE_CALIBRATION_ADC_PIN);
+  Serial.print(pad5f(batteryVoltage));
   Serial.print("V");
-  Serial.print(" (ADC: ");
-  Serial.print(adcValue);
-  Serial.print(")");
 
-  // Memory status
+  // Memory
   extern int __heap_start, *__brkval;
   int v;
   int freeMemory = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-  Serial.print(" | Free Memory: ");
-  Serial.print(freeMemory);
-  Serial.print(" bytes");
+  Serial.print(" | Mem:");
+  Serial.print(pad4s(freeMemory));
   
   // System uptime
   unsigned long uptimeMs = millis();
   unsigned long uptimeSec = uptimeMs / 1000;
   unsigned long uptimeMin = uptimeSec / 60;
-  Serial.print(" | Uptime: ");
-  Serial.print(uptimeMin);
-  Serial.print("m ");
-  Serial.print(uptimeSec % 60);
+  Serial.print(" | Up:");
+  Serial.print(pad2s(uptimeMin));
+  Serial.print("m");
+  Serial.print(pad2s(uptimeSec % 60));
   Serial.print("s");
 
   Serial.println("");

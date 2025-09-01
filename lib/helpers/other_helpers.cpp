@@ -34,6 +34,34 @@ String pad3s(int val) {
   return String(buf);
 }
 
+String pad4s(int val) {
+  char buf[5];
+  snprintf(buf, sizeof(buf), "%4d", val);
+  return String(buf);
+}
+
+String pad2s(int val) {
+  char buf[3];
+  snprintf(buf, sizeof(buf), "%2d", val);
+  return String(buf);
+}
+
+String padString(String str, int width, char padChar, bool leftAlign) {
+  int len = str.length();
+  if (len >= width) return str;
+  
+  String padding = "";
+  for (int i = 0; i < width - len; i++) {
+    padding += padChar;
+  }
+  
+  if (leftAlign) {
+    return str + padding;
+  } else {
+    return padding + str;
+  }
+}
+
 #else
 #include <string>
 
@@ -59,6 +87,19 @@ std::string pad3f(float val) {
   char buf[7];
   snprintf(buf, sizeof(buf), "%5.2f", val);  // Use snprintf instead of dtostrf for native compilation
   return std::string(buf);
+}
+
+std::string padString(std::string str, int width, char padChar, bool leftAlign) {
+  int len = str.length();
+  if (len >= width) return str;
+  
+  std::string padding(width - len, padChar);
+  
+  if (leftAlign) {
+    return str + padding;
+  } else {
+    return padding + str;
+  }
 }
 
 #ifdef ARDUINO
