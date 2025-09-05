@@ -54,16 +54,12 @@ uint8_t packetIndex = 0;
 int16_t xCalib = 0, yCalib = 0;
 bool displayReady = false;
 
-// Stable center positions and min/max for percent mapping (shared with logic)
-extern uint16_t xMin, xMax, yMin, yMax;
-extern uint16_t xCenter, yCenter;
-
 // Actual definitions
-uint16_t xMin = 0, xMax = 1023, yMin = 0, yMax = 1023;
-uint16_t xCenter = 512, yCenter = 512;
+int16_t xMin = 0, xMax = 1023, yMin = 0, yMax = 1023;
+uint16_t xCenter = 512, yCenter = 494;
 
 // Range expansion factors to be more aggressive in capturing full range
-const uint16_t RANGE_EXPANSION_FACTOR = 50; // More aggressive range expansion for better joystick response
+const int16_t RANGE_EXPANSION_FACTOR = 0; // More aggressive range expansion for better joystick response
 
 // Function prototypes
 int freeMemory();
@@ -116,6 +112,13 @@ void setup() {
   
   initRadio();
   
+
+  // Set min/max for percent mapping (accounting for Y-axis inversion in loop)
+  xMin = -5;
+  xMax = 1018;
+  yMin = 0;    // Since raw 1041 becomes 1023-1005 = 18 after inversion
+  yMax = 1012;   // Since raw 18 becomes 1023-18 = 1005 after inversion
+
   // Calibration with fewer samples
   Serial.println("Quick calibration...");
   int32_t xSum = 0, ySum = 0;
@@ -128,15 +131,20 @@ void setup() {
   xCalib = 512 - xSum / samples;
   yCalib = 512 - ySum / samples;
 
-  // Set stable center positions after calibration
-  xCenter = 512;  // This is our target center after calibration
-  yCenter = 512;  // This is our target center after calibration
-
-    // Set min/max for percent mapping (full ADC range)
-    xMin = 0;
-    xMax = 1023;
-    yMin = 0;
-    yMax = 1023;
+  // Set stable center positions after calibration (use actual measured, post-inversion value)
+  // xCenter = 512;  // X axis: keep as before
+  // int rawYIdle = ySum / samples + yCalib;
+  // int yIdleConstrained = constrain(rawYIdle, yMin, yMax);
+  // int yIdleTransformed = yMax - yIdleConstrained; // Apply same transform as in loop
+  // yCenter = 494;
+  // Serial.print("[CALIB] rawYIdle: "); Serial.println(rawYIdle);
+  // Serial.print("[CALIB] yIdleConstrained: "); Serial.println(yIdleConstrained);
+  // Serial.print("[CALIB] yIdleTransformed (main loop y at rest): "); Serial.println(yIdleTransformed);
+  Serial.print("[CALIB] yCenter set to: "); Serial.println(yCenter);
+  
+  // Debug output to verify the ranges
+  Serial.print("Range settings - X: "); Serial.print(xMin); Serial.print(" to "); Serial.print(xMax);
+  Serial.print(", Y: "); Serial.print(yMin); Serial.print(" to "); Serial.println(yMax);
   
   display->println("Calibration Complete");
   display->print("Final X Calibration: ");
@@ -212,13 +220,13 @@ void initRadio() {
 
 void loop() {
   // Read joystick
-  int rawX = analogRead(JOY_X_PIN) + xCalib;
-  int rawY = analogRead(JOY_Y_PIN) + yCalib;
+  int rawX = analogRead(JOY_X_PIN);
+  int rawY = analogRead(JOY_Y_PIN);
   bool btnPressed = (digitalRead(JOY_BUTTON_PIN) == LOW);
   
-  uint16_t x = constrain(rawX, 0, 1023);
-  uint16_t y = constrain(rawY, 0, 1023);
-  y = 1023 - y; // Invert Y axis
+  int16_t x = constrain(rawX, xMin, xMax) + xCalib;
+  int16_t y = constrain(rawY, yMin, yMax) + yCalib;
+  y = yMax - y - yMin; // Invert Y axis
 
   static float rxVoltage = 0.0f;
   static float rxSuccessRate = 0.0f;
@@ -409,17 +417,17 @@ void drawThrottle(int x, int y, int barX, int barY, int offsetX) {
   const int barH = 6;
   int throttlePercent = calculateThrottlePercent(y);
   FillBarResult r = calculateThrottleFillBar(throttlePercent, barW);
-  Serial.print("| [THR] percent: "); Serial.print(throttlePercent); Serial.print(" | ");
-  Serial.print(" fillWidth: "); Serial.print(r.fillWidth); Serial.print(" | ");
   display->setCursor(barX, barY);
   display->print("THR");
   display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);
   int centerX = barX + offsetX + (barW / 2);
   display->drawFastVLine(centerX, barY, barH, SSD1306_WHITE);
   if (r.fillWidth > 0) {
-    if (throttlePercent > 50) {
+    if (throttlePercent > 0) {
+      // Forward throttle: fill to the right of center
       display->fillRect(centerX + 1, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
     } else {
+      // Reverse throttle: fill to the left of center
       display->fillRect(centerX - r.fillWidth, barY + 1, r.fillWidth, barH - 2, SSD1306_WHITE);
     }
   }
@@ -433,8 +441,8 @@ void drawLeftRightBar(int x, int y, int barX, int barY, int offsetX) {
   const int barH = 6;
   int leftRightPercent = calculateLeftRightPercent(x);
   FillBarResult r = calculateLeftRightFillBar(leftRightPercent, barW);
-  Serial.print("| [L/R] percent: "); Serial.print(leftRightPercent); Serial.print(" | ");
-  Serial.print(" fillWidth: "); Serial.print(r.fillWidth); Serial.print(" | ");
+  // Serial.print("| [L/R] percent:"); Serial.print(leftRightPercent); Serial.print(" | ");
+  // Serial.print("fillWidth:"); Serial.print(r.fillWidth); Serial.print(" | ");
   display->setCursor(barX, barY);
   display->print("L/R");
   display->drawRect(barX + offsetX, barY, barW, barH, SSD1306_WHITE);

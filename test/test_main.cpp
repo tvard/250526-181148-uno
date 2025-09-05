@@ -78,10 +78,10 @@
 #define DEFINE_CALIB_GLOBALS 1
 #endif
 #if DEFINE_CALIB_GLOBALS
-uint16_t xMin = 0;
-uint16_t xMax = 1023;
-uint16_t yMin = 0;
-uint16_t yMax = 1023;
+int16_t xMin = 0;
+int16_t xMax = 1023;
+int16_t yMin = 0;
+int16_t yMax = 1023;
 uint16_t xCenter = 512;
 uint16_t yCenter = 512;
 #endif
@@ -405,16 +405,16 @@ static int adc_to_percent(int adc_value) {
 void test_joystick_center_position_mapping(void) {
   int throttleResult  = calculateThrottlePercent(512);
   int leftRightResult = calculateLeftRightPercent(512);
-  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 50, throttleResult,  "Center Y -> ~50%");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, throttleResult,  "Center Y -> ~0%");
   TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0,  leftRightResult, "Center X -> ~0%");
 }
 
 void test_joystick_full_range_mapping(void) {
     // Test throttle percent mapping at low and high ADC values
-    int throttleLow  = calculateThrottlePercent(100);
-    int throttleHigh = calculateThrottlePercent(900);
-    TEST_ASSERT_INT_WITHIN_MESSAGE(2, 10, throttleLow,  "Y=100 ADC -> ~10% throttle (8..12)");
-    TEST_ASSERT_INT_WITHIN_MESSAGE(2, 88, throttleHigh, "Y=900 ADC -> ~88% throttle (86..90)");
+    int throttleLow  = calculateThrottlePercent(100);  // Should be negative (reverse)
+    int throttleHigh = calculateThrottlePercent(900);  // Should be positive (forward)
+    TEST_ASSERT_INT_WITHIN_MESSAGE(5, -80, throttleLow,  "Y=100 ADC -> ~-80% throttle (reverse)");
+    TEST_ASSERT_INT_WITHIN_MESSAGE(5, 76, throttleHigh, "Y=900 ADC -> ~76% throttle (forward)");
 
     // Test left/right percent mapping at low and high ADC values
     int leftRightLow  = calculateLeftRightPercent(100);
@@ -426,7 +426,7 @@ void test_joystick_full_range_mapping(void) {
 void test_joystick_deadzone_functionality(void) {
   int throttleResult  = calculateThrottlePercent(550);
   int leftRightResult = calculateLeftRightPercent(550);
-  TEST_ASSERT_GREATER_THAN_MESSAGE(53, throttleResult,  "> 53%");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(3, throttleResult,  "> 3% (forward)");
   TEST_ASSERT_GREATER_THAN_MESSAGE(3,  leftRightResult, "> 3%");
 }
 
@@ -434,7 +434,7 @@ void test_leftmost_position_no_deadzone_interference(void) {
   TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(0),    "x=0 -> -100%");
   TEST_ASSERT_EQUAL_INT_MESSAGE(100,  calculateLeftRightPercent(1023), "x=1023 -> 100%");
   int throttleCenter = calculateThrottlePercent(512);
-  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 50, throttleCenter, "Center Y ~ 50%");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, throttleCenter, "Center Y ~ 0%");
 }
 
 void test_xMin_underflow_protection(void) {
@@ -503,19 +503,19 @@ static const int DISPLAY_WIDTH  = 128;
 static const int DISPLAY_HEIGHT = 64;
 
 void test_center_position_no_fill(void) {
-  FillBarResult r = calculateThrottleFillBar(50, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(0, DISPLAY_WIDTH);
   TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.fillWidth,  "center throttle no width");
   TEST_ASSERT_TRUE_MESSAGE(r.centerLineDrawn, "center line drawn");
 }
 
 void test_throttle_fillbar_from_center_upward(void) {
-  FillBarResult r = calculateThrottleFillBar(75, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(50, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "throttle rightward width");
   TEST_ASSERT_EQUAL_INT_MESSAGE(DISPLAY_WIDTH/2, r.fillStartX, "starts at center X");
 }
 
 void test_throttle_fillbar_from_center_downward(void) {
-  FillBarResult r = calculateThrottleFillBar(25, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(-50, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "throttle leftward width");
   TEST_ASSERT_LESS_THAN_MESSAGE(DISPLAY_WIDTH/2, r.fillStartX, "starts left of center X");
 }
@@ -545,14 +545,14 @@ void test_fillbar_bar_edge_cases(void) {
 }
 
 void test_fillBarLogic(void) {
-  // Throttle bar: barW=6 => max fill is 3 (half)
+  // Throttle bar: barW=6 => max fill is 3 (half), now -100% to +100%
   FillBarResult thr0   = calculateThrottleFillBar(0, 6);
-  FillBarResult thr50  = calculateThrottleFillBar(50, 6);
-  FillBarResult thr100 = calculateThrottleFillBar(100, 6);
+  FillBarResult thrNeg = calculateThrottleFillBar(-100, 6);
+  FillBarResult thrPos = calculateThrottleFillBar(100, 6);
   
   TEST_ASSERT_EQUAL(0, thr0.fillWidth);
-  TEST_ASSERT_EQUAL(0, thr50.fillWidth);
-  TEST_ASSERT_EQUAL(3, thr100.fillWidth);
+  TEST_ASSERT_EQUAL(3, thrNeg.fillWidth);
+  TEST_ASSERT_EQUAL(3, thrPos.fillWidth);
 
   // Left/Right bar: -100..100 across width
   FillBarResult lr0     = calculateLeftRightFillBar(0, 52);
