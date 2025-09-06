@@ -171,8 +171,7 @@ void initRadio() {
 void loop() {
   // Prepare response data for transmitter (do this FIRST)
   int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
-  uint8_t voltage8bit = map(voltageRaw, 0, 1023, 0, 255);
-  
+  uint8_t voltage8bit = map(voltageRaw, 0, MAX_ADC_VALUE, 0, 255);
   uint8_t mode = autoMode ? 1 : 0; // 0 = manual, 1 = auto
   uint8_t state = 0; // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
   if (leftSpeed > 0 && rightSpeed > 0) state = 1;
@@ -214,7 +213,7 @@ void manualMode() {
   if (isRead) {
     rfLostCounter = 0; // Reset RF lost counter
     
-  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
+  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
   MotorTargets mt = computeMotorTargets(js, leftSpeed, rightSpeed);
 
   // Slew rate logic
@@ -509,7 +508,7 @@ void printStatusReport() {
   // Voltage
   Serial.print(" | Bat:");
   float adcValue = analogRead(VOLTAGE_ADC_PIN);
-  float batteryVoltage = (adcValue * VOLTAGE_ADC_REFERENCE * VOLTAGE_CALIBRATION_BATTERY) / (1023.0 * VOLTAGE_CALIBRATION_ADC_PIN);
+  float batteryVoltage = (adcValue * VOLTAGE_ADC_REFERENCE * VOLTAGE_CALIBRATION_BATTERY) / ((float)MAX_ADC_VALUE * VOLTAGE_CALIBRATION_ADC_PIN);
   Serial.print(pad5f(batteryVoltage));
   Serial.print("V");
 

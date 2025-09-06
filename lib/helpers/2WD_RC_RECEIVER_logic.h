@@ -9,4 +9,4 @@ int slewRateLimit(int current, int target);
 MotorTargets computeMotorTargets(const JoystickProcessingResult& js, int prevLeft, int prevRight);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw);
+JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton);

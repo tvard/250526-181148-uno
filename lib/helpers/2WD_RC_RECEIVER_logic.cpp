@@ -54,10 +54,11 @@ long map(long x, long in_min, long in_max, long out_min, long out_max)
 struct
 {
     void begin(int) {}
-    void println(const char *) {}
     void println(int) {}
-    void print(const char *) {}
     void print(int) {}
+
+    void println(const char* s) { printf("%s\n", s); }
+    void print(const char* s) { printf("%s", s); }
 } Serial;
 #endif
 
@@ -141,6 +142,11 @@ int slewRateLimit(int current, int target)
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight)
 {
     MotorTargets mt = {};
+  
+    // Debug print
+    char buf[64];
+    sprintf(buf, "JS X=%d Y=%d R=%.2f SR=%.2f", js.rawX, js.rawY, js.rawRatioLR, js.steppedRatioLR);
+    Serial.println(buf);
 
     // If the joystick is within the deadzone, stop the motors
     if (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE) {
@@ -150,8 +156,10 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         return mt;
     }
 
+    static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
+
     // In-place turn - when Y stick is near center (512) AND significant X deflection
-    if (abs(js.rawY - JOYSTICK_CENTER) < (0.20f * 1023.0f) && fabs(js.steppedRatioLR) >= 0.10f)
+    if (abs(js.rawY - JOYSTICK_CENTER) < (0.20f * MAX_ADC_VALUE) && fabs(js.steppedRatioLR) >= JOYSTICK_DEADZONE_RATIO)
     {
         // Enforce strict symmetry: always use the same base speed for both left/right in-place turns
         int base_sp = MIN_MOTOR_SPEED + 1;
@@ -160,7 +168,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         // Left in-place turn: right forward, left backward (if aggressive / high x-deflection)
         if (js.steppedRatioLR < 0)
         {
-            if (js.steppedRatioLR <= 0.75f)
+            if (js.steppedRatioLR <= -0.75f)
             {
                 mt.left = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
             }
@@ -175,24 +183,14 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         else if (js.steppedRatioLR > 0)
         {
             if (js.steppedRatioLR >= 0.75f)
-                mt.right = min(-base_sp + offset_half, -MIN_MOTOR_SPEED);
+                mt.right = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
             else
                 mt.right = 0;
 
-            mt.left = max(base_sp - offset_half, MIN_MOTOR_SPEED);
+            mt.left = max(base_sp + offset_half, MIN_MOTOR_SPEED);
         }
 
         mt.skipSlewRate = (fabs(js.steppedRatioLR) >= 0.90f); // near full x-deflection
-
-        // Clamp to MIN_MOTOR_SPEED if nonzero (preserve sign and offset)
-        if (mt.left > 0 && mt.left <= MIN_MOTOR_SPEED)
-            mt.left = MIN_MOTOR_SPEED + 1;
-        if (mt.left < 0 && mt.left >= -MIN_MOTOR_SPEED)
-            mt.left = -(MIN_MOTOR_SPEED + 1);
-        if (mt.right > 0 && mt.right <= MIN_MOTOR_SPEED)
-            mt.right = MIN_MOTOR_SPEED + 1;
-        if (mt.right < 0 && mt.right >= -MIN_MOTOR_SPEED)
-            mt.right = -(MIN_MOTOR_SPEED + 1);
 
         return mt;
     }
@@ -202,19 +200,10 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
     float offset_half = LR_OFFSET / 2.0f;
     if (js.rawY > FORWARD_THRESHOLD)
     {
-        sp = map(constrain(js.rawY, FORWARD_THRESHOLD, 1023), FORWARD_THRESHOLD, 1023, MIN_MOTOR_SPEED, MAX_SPEED);
+        sp = map(constrain(js.rawY, FORWARD_THRESHOLD, MAX_ADC_VALUE), FORWARD_THRESHOLD, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
         mt.left = sp - offset_half;
         mt.right = sp + offset_half;
 
-        // Clamp to MIN_MOTOR_SPEED if nonzero (preserve sign and offset)
-        if (mt.left > 0 && mt.left < MIN_MOTOR_SPEED)
-            mt.left = MIN_MOTOR_SPEED;
-        if (mt.left < 0 && mt.left > -MIN_MOTOR_SPEED)
-            mt.left = -MIN_MOTOR_SPEED;
-        if (mt.right > 0 && mt.right < MIN_MOTOR_SPEED)
-            mt.right = MIN_MOTOR_SPEED;
-        if (mt.right < 0 && mt.right > -MIN_MOTOR_SPEED)
-            mt.right = -MIN_MOTOR_SPEED;
         return mt;
     }
     else if (js.rawY < BACKWARD_THRESHOLD)
@@ -222,16 +211,6 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         sp = map(constrain(js.rawY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
         mt.left = sp + offset_half; // For reverse, swap sign
         mt.right = sp - offset_half;
-
-        // Clamp to MIN_MOTOR_SPEED if nonzero (preserve sign and offset)
-        if (mt.left > 0 && mt.left < MIN_MOTOR_SPEED)
-            mt.left = MIN_MOTOR_SPEED;
-        if (mt.left < 0 && mt.left > -MIN_MOTOR_SPEED)
-            mt.left = -MIN_MOTOR_SPEED;
-        if (mt.right > 0 && mt.right < MIN_MOTOR_SPEED)
-            mt.right = MIN_MOTOR_SPEED;
-        if (mt.right < 0 && mt.right > -MIN_MOTOR_SPEED)
-            mt.right = -MIN_MOTOR_SPEED;
 
         if (fabs(js.steppedRatioLR) <= 0.15f)
             mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
@@ -277,13 +256,13 @@ bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetR
             (abs(prevLeft) > 0 || abs(prevRight) > 0));
 }
 
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw)
+JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton)
 {
     JoystickProcessingResult js;
 
     // Keep raw values throughout - no conversion needed
-    js.rawX = joystickX; // 0-1023, center = 512
-    js.rawY = joystickY; // 0-1023, center = 512
+    js.rawX = joystickX; // 0-MAX_ADC_VALUE, center = 512
+    js.rawY = joystickY; // 0-MAX_ADC_VALUE, center = 512
 
     js.buzzerOn = joystickButton;
 
@@ -292,7 +271,11 @@ JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joys
     js.rawRatioLR = constrain(js.rawRatioLR, -1.0f, 1.0f);
 
     const float quantizeStep = 0.05f; // value if which steppedRatioLR is quantized / rounded to
-    js.steppedRatioLR = round(js.rawRatioLR / quantizeStep) * quantizeStep;
+    
+    if (js.rawRatioLR > 0)
+        js.steppedRatioLR = ceil(js.rawRatioLR / quantizeStep) * quantizeStep;  // round up for positive values (to favor turning)  
+    else
+        js.steppedRatioLR = floor(js.rawRatioLR / quantizeStep) * quantizeStep;
 
     // Debug output for diagnosis
 

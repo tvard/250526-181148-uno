@@ -55,8 +55,8 @@ int16_t xCalib = 0, yCalib = 0;
 bool displayReady = false;
 
 // Actual definitions
-int16_t xMin = 0, xMax = 1023, yMin = 0, yMax = 1023;
-uint16_t xCenter = 512, yCenter = 494;
+int16_t xMin = 0, xMax = MAX_ADC_VALUE, yMin = 0, yMax = MAX_ADC_VALUE;
+uint16_t xCenter = JOYSTICK_CENTER, yCenter = 494;
 
 // Range expansion factors to be more aggressive in capturing full range
 const int16_t RANGE_EXPANSION_FACTOR = 0; // More aggressive range expansion for better joystick response
@@ -116,8 +116,8 @@ void setup() {
   // Set min/max for percent mapping (accounting for Y-axis inversion in loop)
   xMin = -5;
   xMax = 1018;
-  yMin = 0;    // Since raw 1041 becomes 1023-1005 = 18 after inversion
-  yMax = 1012;   // Since raw 18 becomes 1023-18 = 1005 after inversion
+  yMin = 0;    
+  yMax = 1012; 
 
   // Calibration with fewer samples
   Serial.println("Quick calibration...");
@@ -128,11 +128,11 @@ void setup() {
     ySum += analogRead(JOY_Y_PIN);
     delay(20);
   }
-  xCalib = 512 - xSum / samples;
-  yCalib = 512 - ySum / samples;
+  xCalib = JOYSTICK_CENTER - xSum / samples;
+  yCalib = JOYSTICK_CENTER - ySum / samples;
 
   // Set stable center positions after calibration (use actual measured, post-inversion value)
-  // xCenter = 512;  // X axis: keep as before
+  // xCenter = JOYSTICK_CENTER;  // X axis: keep as before
   // int rawYIdle = ySum / samples + yCalib;
   // int yIdleConstrained = constrain(rawYIdle, yMin, yMax);
   // int yIdleTransformed = yMax - yIdleConstrained; // Apply same transform as in loop
@@ -280,7 +280,7 @@ void loop() {
   // Update display occasionally to save processing
   static uint32_t lastDisplay = 0;
   if (displayReady && millis() - lastDisplay > 200) { // 5Hz update
-    float txVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / 1023.0f + 0.04f;
+    float txVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / (float)MAX_ADC_VALUE + 0.04f;
     float txSuccessRate = getSuccessRate();
     displayInfo(x, y, btnPressed, txVoltage, rxVoltage, txSuccessRate, rxSuccessRate);
     lastDisplay = millis();
@@ -312,7 +312,7 @@ void loop() {
 
       // Voltage
       Serial.print("TX Voltage: ");
-      Serial.print(analogRead(VOLTAGE_SENSOR_PIN) * 3.3f / 1023.0f + 0.04f);
+      Serial.print(analogRead(VOLTAGE_SENSOR_PIN) * 3.3f / (float)MAX_ADC_VALUE + 0.04f);
       Serial.print(" (");
       Serial.print(analogRead(VOLTAGE_SENSOR_PIN));
       Serial.print(")"); Serial.print(" | ");

@@ -30,10 +30,10 @@ const float VOLTAGE_CALIBRATION_ADC_PIN = 3.29f;  // Voltage at ADC pin when bat
 //    constaint to MIN_MOTOR_SPEED, maxMotorSpeed and apply ramping
 const int JOYSTICK_CENTER = 512;                        // Center position of joystick (0-1023 range)
 const int JOYSTICK_DEADZONE = 30;                       // deadzone around center based on joystick variance
+const int MAX_ADC_VALUE = 1023;                         // Maximum ADC value for 10-bit ADC (0-1023 range)
 const int FORWARD_THRESHOLD = JOYSTICK_CENTER + JOYSTICK_DEADZONE;  // threshold to start forward movement
 const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // threshold to start backward movement
 const float FULL_TURN_THRESHOLD = 0.6f; // threshold (as a percentage of max X deflection) for full in-place turn
-
 // function declarations
 int slewRateLimit(int current, int target);
 
@@ -58,10 +58,6 @@ std::string pad2s(int val);  // 2-char right-aligned integer (for percentages/mi
 std::string padString(std::string str, int width, char padChar = ' ', bool leftAlign = false);
 #endif
 
-
-
-
-
 struct JoystickInput {
     int x;
     int y;
@@ -80,8 +76,3 @@ struct MotorTargets {
     int right;
     bool skipSlewRate;
 };
-
-JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw = true);
-MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight);
-bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
-bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);
