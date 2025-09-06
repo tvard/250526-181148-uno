@@ -95,18 +95,14 @@ extern int leftSpeed;
 extern int rightSpeed;
 
 // --- Test fixtures -----------------------------------------------------------
-static ManualModeInputs input{};
 static JoystickProcessingResult js{};
 static MotorTargets mt{};
 
 void setUp(void) {
-  input = {};
-  input.joystick.rawX = 512;
-  input.joystick.rawY = 512;
-  input.joystick.buzzerOn = false;
-  input.leftSpeed = input.rightSpeed = 0;
-  input.prevLeftSpeed = input.prevRightSpeed = 0;
   js = {};
+  js.rawX = 512;
+  js.rawY = 512;
+  js.buzzerOn = false;
   mt = {};
 }
 

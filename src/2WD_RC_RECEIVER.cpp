@@ -6,6 +6,7 @@
 #endif
 #include "helpers.h"
 #include "pitches.h"
+// #include "2WD_RC_RECEIVER_logic.h"
 
 // Pin Definitions
 const int RIGHT_MOTOR_EN = 5;   // L293D PIN 1 (Enable 1)
@@ -213,25 +214,44 @@ void manualMode() {
   if (isRead) {
     rfLostCounter = 0; // Reset RF lost counter
     
-    JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
-    
-    ManualModeInputs in = {
-        js, leftSpeed, rightSpeed, prevLeftSpeed, prevRightSpeed};
+  JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton, true);
+  MotorTargets mt = computeMotorTargets(js, leftSpeed, rightSpeed);
 
-    ManualModeOutputs out = manualModeStep(in);
+  // Slew rate logic
+  int nextLeft = leftSpeed;
+  int nextRight = rightSpeed;
+  if (mt.skipSlewRate) {
+    nextLeft = mt.left;
+    nextRight = mt.right;
+  } else {
+    if (nextLeft != mt.left)
+      nextLeft = slewRateLimit(nextLeft, mt.left);
+    if (nextRight != mt.right)
+      nextRight = slewRateLimit(nextRight, mt.right);
+  }
 
-    leftSpeed = out.leftSpeed;
-    rightSpeed = out.rightSpeed;
-    brakingApplied = out.brakingApplied;
+  // Braking logic
+  brakingApplied = shouldApplyBraking(prevLeftSpeed, prevRightSpeed, mt.left, mt.right);
+  int outputLeft, outputRight;
+  if (brakingApplied) {
+    outputLeft = -prevLeftSpeed / 4;
+    outputRight = -prevRightSpeed / 4;
+    nextLeft = 0;
+    nextRight = 0;
+  } else {
+    outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
+    outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+  }
 
-    setMotorSpeeds(out.outputLeft, out.outputRight);
-
-    prevLeftSpeed = leftSpeed;
-    prevRightSpeed = rightSpeed;
+  leftSpeed = nextLeft;
+  rightSpeed = nextRight;
+  setMotorSpeeds(outputLeft, outputRight);
+  prevLeftSpeed = leftSpeed;
+  prevRightSpeed = rightSpeed;
 
     // Buzzer feedback
-    beep(out.buzzerOn);
-    
+    beep(js.buzzerOn);
+
     // Update packet history with successful reception
     updatePacketHistory(true);
     
@@ -331,9 +351,6 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed) {
 
   if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) &&
       ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0))) {
-    leftSpeed += leftSpeed > 0 ? LEFT_OFFSET : -LEFT_OFFSET;
-    rightSpeed += rightSpeed > 0 ? RIGHT_OFFSET : -RIGHT_OFFSET;
-
     if (abs(leftSpeed) < MIN_MOTOR_SPEED || abs(rightSpeed) < MIN_MOTOR_SPEED) {
       int diff = MIN_MOTOR_SPEED - min(abs(leftSpeed), abs(rightSpeed));
       leftSpeed += leftSpeed > 0 ? diff : -diff;
@@ -395,11 +412,6 @@ void stopMotors() {
   digitalWrite(RIGHT_MOTOR_IN1, LOW);
   digitalWrite(RIGHT_MOTOR_IN2, LOW);
   analogWrite(RIGHT_MOTOR_EN, 0);
-}
-
-// Calculation functions (separated from display for testing)
-// ...existing code...
-#include "2WD_RC_RECEIVER_logic.h"
 }
 
 void beep(int duration) {

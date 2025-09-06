@@ -9,8 +9,7 @@ const int MAX_SPEED        = 255;
 const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
 const int MOTOR_DEADZONE   = 10; // motor values within this range of zero are considered stopped
 
-const int LEFT_OFFSET      = +5;  // Offset for left motor speed
-const int RIGHT_OFFSET     = -5;  // Offset for right motor speed
+const int OFFSET = 5;           // Offset for both motors, +ve = more right speed, -ve = more left speed
 
 const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
 const int TURN_TIME        = 800;     // Time to turn in milliseconds
@@ -82,28 +81,7 @@ struct MotorTargets {
     bool skipSlewRate;
 };
 
-struct ManualModeInputs {
-    JoystickProcessingResult joystick;
-    int leftSpeed;
-    int rightSpeed;
-    int prevLeftSpeed;
-    int prevRightSpeed;
-    // ...add more as needed
-};
-
-struct ManualModeOutputs {
-    int leftSpeed;
-    int rightSpeed;
-    int outputLeft;
-    int outputRight;
-    bool brakingApplied;
-    bool skipSlewRate;
-    bool buzzerOn;
-    // ...add more as needed
-};
-
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton, bool isRaw = true);
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);
-ManualModeOutputs manualModeStep(const ManualModeInputs& in);
