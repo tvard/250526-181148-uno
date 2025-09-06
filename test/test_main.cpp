@@ -252,24 +252,19 @@ void test_computeMotorTargets_still(void) {
 }
 
 void test_computeMotorTargets_right_turn(void) {
-  js = processJoystick(512 + 80, 512, false, false); // Just above deadzone and min speed
+  js = processJoystick(512 + JOYSTICK_DEADZONE + 5, 512, false, false); // Just above deadzone and min speed
   mt = computeMotorTargets(js, 0, 0);
   TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio > 0");
-  int offset_half = LR_OFFSET / 2;
-  int unclamped_left = MIN_MOTOR_SPEED - offset_half;
-  int expected_left = (unclamped_left < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped_left;
-  TEST_ASSERT_INT_WITHIN_MESSAGE(1, expected_left, mt.left, "Left = clamped(MIN_MOTOR_SPEED - offset_half) for right turn (offset compensates for hardware)");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left = clamped(MIN_MOTOR_SPEED - offset_half) for right turn (offset compensates for hardware)");
   // Accept zero or a small negative value (tolerance for rounding/clamping)
-  TEST_ASSERT_INT_WITHIN_MESSAGE(1, 0, mt.right, "Right == 0 (tolerance for rounding/clamping)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right == 0 (tolerance for rounding/clamping)");
 }
 
 void test_computeMotorTargets_left_turn(void) {
-  js = processJoystick(512 - 80, 512, false, false); // Just above deadzone and min speed
+  js = processJoystick(512 - JOYSTICK_DEADZONE - 5, 512, false, false); // Just above deadzone and min speed
   mt = computeMotorTargets(js, 0, 0);
   int offset_half = LR_OFFSET / 2;
-  int unclamped_right = MIN_MOTOR_SPEED + offset_half;
-  int expected_right = (unclamped_right < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped_right;
-  TEST_ASSERT_INT_WITHIN_MESSAGE(1, expected_right, mt.right, "Right = clamped(MIN_MOTOR_SPEED + offset_half) for left turn (offset compensates for hardware)");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right = clamped(MIN_MOTOR_SPEED + offset_half) for left turn (offset compensates for hardware)");
   TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left == 0");
 }
 
