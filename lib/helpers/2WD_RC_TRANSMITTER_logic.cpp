@@ -8,8 +8,6 @@ extern int16_t xMin, xMax, yMin, yMax;
 extern uint16_t xCenter, yCenter;
 
 int calculateThrottlePercent(int y) {
-    // Debug print
-    // printf("[DEBUG] y input: %d, yMin: %d, yCenter: %d, yMax: %d\n", y, yMin, yCenter, yMax);
 
     if (y < yMin) {
         y = yMin;
