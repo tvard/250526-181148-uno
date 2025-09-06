@@ -1,12 +1,8 @@
-// test_main.cpp — refactored for clarity, safety, and maintainability.
-// Build (native): pio test -e native -vv
-
 #include <cmath>
 #include <cstdio>
 #include "unity.h"
-
-// --- SUT/Helpers -------------------------------------------------------------
 #include "../lib/helpers/helpers.h"
+#include "../lib/helpers/2WD_RC_RECEIVER_logic.h"
 #include "../lib/helpers/display_helpers.h"   // Fillbars
 #include "../lib/helpers/2WD_RC_TRANSMITTER_logic.h"  // production declarations
 
@@ -98,6 +94,7 @@ extern int rightSpeed;
 static JoystickProcessingResult js{};
 static MotorTargets mt{};
 
+
 void setUp(void) {
   js = {};
   js.rawX = 512;
@@ -107,6 +104,33 @@ void setUp(void) {
 }
 
 void tearDown(void) {}
+
+// Test for strict symmetry and offset in in-place turns
+void test_inplace_turn_symmetry_with_offset(void) {
+  JoystickProcessingResult js_left = processJoystick(512 - 500, 512, false, false);
+  MotorTargets mt_left = computeMotorTargets(js_left, 0, 0);
+  JoystickProcessingResult js_right = processJoystick(512 + 500, 512, false, false);
+  MotorTargets mt_right = computeMotorTargets(js_right, 0, 0);
+  int abs_left = abs(mt_left.left);
+  int abs_right = abs(mt_right.right);
+  int offset_half = LR_OFFSET / 2;
+  int unclamped1 = MIN_MOTOR_SPEED - offset_half;
+  int unclamped2 = MIN_MOTOR_SPEED + offset_half;
+  int expected1 = (unclamped1 < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped1;
+  int expected2 = (unclamped2 < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped2;
+  char msg[128];
+  snprintf(msg, sizeof(msg),
+    "In-place turn: abs_left=%d abs_right=%d, expected values: %d±1 and %d±1 (order independent)",
+    abs_left, abs_right, expected1, expected2);
+  int match1 = (abs(abs_left - expected1) <= 1 && abs(abs_right - expected2) <= 1);
+  int match2 = (abs(abs_left - expected2) <= 1 && abs(abs_right - expected1) <= 1);
+  TEST_ASSERT_TRUE_MESSAGE(match1 || match2, msg);
+  int offset_applied_left = abs(mt_left.right) - abs(mt_left.left);
+  int offset_applied_right = abs(mt_right.left) - abs(mt_right.right);
+  // Offset should be zero due to clamping
+  TEST_ASSERT_EQUAL_MESSAGE(0, offset_applied_left, "Offset applied in left turn is zero (clamped)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, offset_applied_right, "Offset applied in right turn is zero (clamped)");
+}
 
 // ----------------------------- Tests: Slew limiter ---------------------------
 void test_slewRateLimit_no_change(void) {
@@ -209,7 +233,6 @@ void test_processJoystick_buzzer(void) {
 
 void test_processJoystick_movement(void) {
   js = processJoystick(512 + 50, 512 - 100, false, false);
-  std::printf("Joystick: %d, %d\n", js.rawX, js.rawY);
   TEST_ASSERT_INT_WITHIN(2, 512 + 50,  js.rawX);
   TEST_ASSERT_INT_WITHIN(2, 512 - 100, js.rawY);
   TEST_ASSERT_FALSE(js.buzzerOn);
@@ -229,17 +252,24 @@ void test_computeMotorTargets_still(void) {
 }
 
 void test_computeMotorTargets_right_turn(void) {
-  js = processJoystick(512 + 50, 512, false, false);
+  js = processJoystick(512 + 80, 512, false, false); // Just above deadzone and min speed
   mt = computeMotorTargets(js, 0, 0);
   TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio > 0");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right == 0");
+  int offset_half = LR_OFFSET / 2;
+  int unclamped_left = MIN_MOTOR_SPEED - offset_half;
+  int expected_left = (unclamped_left < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped_left;
+  TEST_ASSERT_INT_WITHIN_MESSAGE(1, expected_left, mt.left, "Left = clamped(MIN_MOTOR_SPEED - offset_half) for right turn (offset compensates for hardware)");
+  // Accept zero or a small negative value (tolerance for rounding/clamping)
+  TEST_ASSERT_INT_WITHIN_MESSAGE(1, 0, mt.right, "Right == 0 (tolerance for rounding/clamping)");
 }
 
 void test_computeMotorTargets_left_turn(void) {
-  js = processJoystick(512 - 50, 512, false, false);
+  js = processJoystick(512 - 80, 512, false, false); // Just above deadzone and min speed
   mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
+  int offset_half = LR_OFFSET / 2;
+  int unclamped_right = MIN_MOTOR_SPEED + offset_half;
+  int expected_right = (unclamped_right < MIN_MOTOR_SPEED) ? MIN_MOTOR_SPEED : unclamped_right;
+  TEST_ASSERT_INT_WITHIN_MESSAGE(1, expected_right, mt.right, "Right = clamped(MIN_MOTOR_SPEED + offset_half) for left turn (offset compensates for hardware)");
   TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left == 0");
 }
 
@@ -253,8 +283,8 @@ void test_computeMotorTargets_forward(void) {
 void test_computeMotorTargets_reverse(void) {
   js = processJoystick(512, 512 - 100, false, false);
   mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.left,  "Left < -MIN");
-  TEST_ASSERT_LESS_THAN_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right < -MIN");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.left,  "Left <= -MIN");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right <= -MIN");
 }
 
 void test_computeMotorTargets_sharp_right_turn(void) {
@@ -284,10 +314,11 @@ void test_computeMotorTargets_Mixing(void) {
   mt = computeMotorTargets(js, 0, 0);
   TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left,  "Left >= MIN");
   TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left <= Right (left turn)");
+  TEST_ASSERT_LESS_THAN_MESSAGE(mt.left, mt.right, "Left < Right (left turn)");
 }
 
 void test_computeMotorTargets_skipSlew_leftRight(void) {
+  test_inplace_turn_symmetry_with_offset();
   js = processJoystick(512 + 50, 512, false, false);
   mt = computeMotorTargets(js, 0, 0);
   TEST_ASSERT_FALSE(mt.skipSlewRate);

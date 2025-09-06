@@ -9,7 +9,7 @@ const int MAX_SPEED        = 255;
 const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
 const int MOTOR_DEADZONE   = 10; // motor values within this range of zero are considered stopped
 
-const int OFFSET = 5;           // Offset for both motors, +ve = more right speed, -ve = more left speed
+const int LR_OFFSET         = -5;        // Left/Right balance offset, +ve = more right speed, -ve = more left speed
 
 const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
 const int TURN_TIME        = 800;     // Time to turn in milliseconds

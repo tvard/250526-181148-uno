@@ -271,7 +271,7 @@ void manualMode() {
 }
 
 bool readRFSignals() {
-  static unsigned long lastReceiveTime = 0;
+  // static unsigned long lastReceiveTime = 0; // (unused)
   static int consecutiveFailures = 0;
   
   if (radio && radio->available()) {
@@ -288,7 +288,7 @@ bool readRFSignals() {
       joystickY = receivedData.yValue;
       joystickButton = receivedData.buttonPressed;
       
-      lastReceiveTime = millis();
+      // lastReceiveTime = millis();
       consecutiveFailures = 0;
       
       return true;
@@ -485,9 +485,9 @@ void printStatusReport() {
   } else if (leftSpeed < 0 && rightSpeed < 0) {
     direction = "REV";
   } else if (leftSpeed > rightSpeed) {
-    direction = "LEFT";
-  } else if (rightSpeed > leftSpeed) {
     direction = "RIGHT";
+  } else if (rightSpeed > leftSpeed) {
+    direction = "LEFT";
   } else {
     direction = "MIX";
   }
