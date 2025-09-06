@@ -181,26 +181,61 @@ void test_slewRateLimit_max_speed_behavior(void)
 
 void test_shouldSkipSlewRate(void)
 {
+  // Direction reversal (should skip)
   TEST_ASSERT_TRUE(shouldSkipSlewRate(100, 100, -100, -100));
   TEST_ASSERT_TRUE(shouldSkipSlewRate(-100, -100, 100, 100));
-  TEST_ASSERT_FALSE(shouldSkipSlewRate(100, 100, 80, 80));
-  TEST_ASSERT_FALSE(shouldSkipSlewRate(-100, -100, -80, -80));
   TEST_ASSERT_TRUE(shouldSkipSlewRate(100, -100, -100, -100)); // mixed L->R
   TEST_ASSERT_TRUE(shouldSkipSlewRate(-100, 100, 100, 100));   // mixed L->R
+
+  // Aggressive forward (should skip)
+  int aggressive_fwd = (int)(0.91f * MAX_SPEED);
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, aggressive_fwd, aggressive_fwd));
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(10, 10, aggressive_fwd, aggressive_fwd));
+
+  // Aggressive reverse (should skip)
+  int aggressive_rev = (int)(-0.91f * MAX_SPEED);
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, aggressive_rev, aggressive_rev));
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(-10, -10, aggressive_rev, aggressive_rev));
+
+  // Not aggressive (should NOT skip)
+  int mild_fwd = (int)(0.5f * MAX_SPEED);
+  int mild_rev = (int)(-0.5f * MAX_SPEED);
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, mild_fwd, mild_fwd));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, mild_rev, mild_rev));
+
+  // Aggressive sharp turn (should skip)
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, -MIN_MOTOR_SPEED, MIN_MOTOR_SPEED));
+  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED));
+
+  // Not sharp turn (should NOT skip)
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, -MIN_MOTOR_SPEED + 1, MIN_MOTOR_SPEED - 1));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, MIN_MOTOR_SPEED - 1, -MIN_MOTOR_SPEED + 1));
 }
 
-void test_shouldApplyBraking_on_stop(void)
-{
-  TEST_ASSERT_TRUE(shouldApplyBraking(100, 100, 0, 0));
-  TEST_ASSERT_TRUE(shouldApplyBraking(-100, -100, 0, 0));
-  TEST_ASSERT_FALSE(shouldApplyBraking(0, 0, 0, 0));
+// ----------------------------- Tests: Braking logic ---------------------------
+void test_shouldApplyBraking(void)
+{ 
+  TEST_ASSERT_TRUE(shouldApplyBraking(BRAKE_APPLY_THRESHOLD, BRAKE_APPLY_THRESHOLD, 0, 0));
+  TEST_ASSERT_TRUE(shouldApplyBraking(-BRAKE_APPLY_THRESHOLD, -BRAKE_APPLY_THRESHOLD, 0, 0));
+  TEST_ASSERT_FALSE(shouldApplyBraking(BRAKE_APPLY_THRESHOLD - 5, BRAKE_APPLY_THRESHOLD - 5, 0, 0));
+  TEST_ASSERT_FALSE(shouldApplyBraking(-BRAKE_APPLY_THRESHOLD + 5, -BRAKE_APPLY_THRESHOLD + 5, 0, 0));
 }
 
-void test_shouldApplyBraking_after_brake(void)
+void test_dynamicBrakingApplied(void)
 {
-  TEST_ASSERT_TRUE(shouldApplyBraking(100, 100, 0, 0));
-  TEST_ASSERT_FALSE(shouldApplyBraking(0, 0, 0, 0));
+  js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false); // CENTER = stop
+  mt = computeMotorTargets(js, MAX_SPEED, MAX_SPEED);
+
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Small Reverse expected (dynamic braking)");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Small Reverse expected (dynamic braking)");
+
+  // vice versa
+
+  mt = computeMotorTargets(js, -MAX_SPEED, -MAX_SPEED);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Small Forward expected (dynamic braking)");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Small Forward expected (dynamic braking)");
 }
+
 
 void test_slewRateLimit_at_boundaries(void)
 {
@@ -402,12 +437,19 @@ void test_processJoystick_NoMotion(void)
   TEST_ASSERT_EQUAL(0, mt.right);
 }
 
-void test_processJoystick_NearZeroInputWithinDeadzone_NoMotion(void)
+void test_processJoystick_Deadzone_NoMotion(void)
 {
-  js = processJoystick(JOYSTICK_CENTER + 5, JOYSTICK_CENTER - 4, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_EQUAL(0, mt.left);
-  TEST_ASSERT_EQUAL(0, mt.right);
+  // Test several points within the deadzone around the center
+  int center = JOYSTICK_CENTER;
+  int dz = JOYSTICK_DEADZONE;
+  for (int dx = -dz + 1; dx < dz; ++dx) {
+    for (int dy = -dz + 1; dy < dz; ++dy) {
+      js = processJoystick(center + dx, center + dy, false);
+      mt = computeMotorTargets(js, 0, 0);
+      TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left should be 0 in deadzone");
+      TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right should be 0 in deadzone");
+    }
+  }
 }
 
 void test_slewRateLimit_RampsDownToZero(void)
@@ -672,13 +714,13 @@ int main(void)
   // joystick => motor targets + action tests
   RUN_TEST(test_processJoystick_NoMotion);
   RUN_TEST(test_processJoystick_deadzone_behavior);
-  RUN_TEST(test_processJoystick_NearZeroInputWithinDeadzone_NoMotion);
+  RUN_TEST(test_processJoystick_Deadzone_NoMotion);
   RUN_TEST(test_processJoystick_movement);
   RUN_TEST(test_processJoystick_buzzer);
 
   // braking integration tests
-  RUN_TEST(test_shouldApplyBraking_on_stop);
-  RUN_TEST(test_shouldApplyBraking_after_brake);
+  RUN_TEST(test_shouldApplyBraking);
+  RUN_TEST(test_dynamicBrakingApplied);
 
   // joystick mapping tests (to throttle %, to L/R %)
   RUN_TEST(test_joystick_center_position_mapping);
