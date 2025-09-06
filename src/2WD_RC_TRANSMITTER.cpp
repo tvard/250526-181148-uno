@@ -26,6 +26,10 @@
 const int RADIO_CHANNEL = 76;
 const byte addresses[][6] = {"00001", "00002"};
 
+// Packet history globals (definition)
+uint32_t packetHistory = 32;
+uint8_t packetIndex = 0;
+
 // Packet structures - MUST MATCH RECEIVER EXACTLY
 struct JoystickData {
   int xValue;           // 16-bit int (matches receiver)
@@ -45,11 +49,6 @@ struct __attribute__((packed)) RxData {
 RF24* radio = nullptr;
 Adafruit_SSD1306* display = nullptr;
 
-// Minimal packet history (reduced from 100 to 10)
-const int PACKET_HISTORY_SIZE = 10;
-uint16_t packetHistory = 0; // Use bitfield instead of array
-uint8_t packetIndex = 0;
-
 // Calibration values
 int16_t xCalib = 0, yCalib = 0;
 bool displayReady = false;
@@ -66,8 +65,6 @@ int freeMemory();
 void initDisplay();
 void initRadio();
 uint8_t calculateChecksum(const JoystickData& data);
-void updatePacketHistory(bool success);
-float getSuccessRate();
 void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate);
 void drawRssi(float successRate, int barX, int barY, bool showLabel, const char* suffix, int offsetX);
 void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, bool showLabel, const char* suffix, int offsetX);
@@ -233,21 +230,22 @@ void loop() {
   static uint32_t lastAckTime = 0;
 
   // Send data continuously if radio is available
+  static bool lastPacketHadAck = true;
   if (radio) {
     JoystickData txData;
     txData.xValue = x;
     txData.yValue = y; 
     txData.buttonPressed = btnPressed;
     txData.checksum = calculateChecksum(txData);
-    
+
     radio->stopListening();
     bool success = radio->write(&txData, sizeof(JoystickData));
-    
+
     // Check for ACK payload from receiver
     if (success && radio->isAckPayloadAvailable()) {
       RxData ackData;
       radio->read(&ackData, sizeof(RxData));
-      
+
       // Validate CRC of received ACK payload
       uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
       if (ackData.crc == expectedCrc) {
@@ -258,17 +256,22 @@ void loop() {
 
         uint8_t receiverMode = (ackData.status >> 2) & 0x03;
         uint8_t receiverState = ackData.status & 0x03;
-        
+
         // Use the values to avoid warning (can be expanded later for mode display)
         (void)receiverMode;   // Suppress unused variable warning
         (void)receiverState;  // Suppress unused variable warning
-        
+
         lastAckTime = millis(); // Update timestamp when we receive valid ACK
+        updatePacketHistory(true);
+        lastPacketHadAck = true;
       }
+    } else {
+      // No ACK received for this packet
+      updatePacketHistory(false);
+      lastPacketHadAck = false;
     }
-    
+
     radio->startListening();
-    updatePacketHistory(success);
   }
 
   // Check for timeout - reset RX values if no ACK received for n milliseconds (200ms is typical for RF modules)
@@ -290,16 +293,14 @@ void loop() {
     // Periodic memory report
 
     static uint32_t lastMemReport = 0;
-    if (millis() - lastMemReport > 1000) {
+    if (millis() - lastMemReport > 250) {
       // Serial.print(" | Free memory: ");  Serial.print(freeMemory()); Serial.print(" | ");
 
       // NRF signal report
-      Serial.print("Packet History: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
-      Serial.print("Packet Index: "); Serial.print(packetIndex); Serial.print(" | ");
-      Serial.print(" | TX Success Rate: "); Serial.print(" | ");
-      Serial.print(getSuccessRate() * 100);
-      Serial.print("% | ACK Rx: ");
-      Serial.print(millis() - lastAckTime > 200 ? "*Timeout*" : "Active"); Serial.print(" | ");
+      // Serial.print("PK-HIS: "); Serial.print(packetHistory, BIN); Serial.print(" | ");
+      // Serial.print("PK-IND: "); Serial.print(packetIndex); Serial.print(" | ");
+      Serial.print("TX Success Rate: "); Serial.print(getSuccessRate() * 100); Serial.print("% | ");
+      Serial.print("ACK Rx: "); Serial.print(millis() - lastAckTime > 200 ? "*Timeout*" : "Active"); Serial.print(" | ");
 
       // XY Axis + Button with range info
       Serial.print("X: "); Serial.print(x); 
@@ -339,23 +340,22 @@ uint8_t calculateChecksum(const JoystickData& data) {
 
 void updatePacketHistory(bool success) {
   if (success) {
-    packetHistory |= (1 << packetIndex);
+    packetHistory |= (1UL << packetIndex);
   } else {
-    packetHistory &= ~(1 << packetIndex);
+    packetHistory &= ~(1UL << packetIndex);
   }
   packetIndex = (packetIndex + 1) % PACKET_HISTORY_SIZE;
 }
 
 float getSuccessRate() {
+  uint32_t hist = packetHistory;
   int count = 0;
   for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
-    if (packetHistory & (1 << i)) count++;
+    if (hist & 1UL) count++;
+    hist >>= 1;
   }
-  return (float)count / PACKET_HISTORY_SIZE; // Success rate as a fraction
+  return (float)count / PACKET_HISTORY_SIZE;
 }
-
-// ...existing code...
-#include "2WD_RC_TRANSMITTER_logic.h"
 
 void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate) {
   display->clearDisplay();

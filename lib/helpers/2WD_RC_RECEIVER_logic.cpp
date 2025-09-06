@@ -143,16 +143,25 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
 {
     MotorTargets mt = {};
   
-    // Debug print
-    char buf[64];
-    sprintf(buf, "JS X=%d Y=%d R=%.2f SR=%.2f", js.rawX, js.rawY, js.rawRatioLR, js.steppedRatioLR);
-    Serial.println(buf);
+    // // Debug print
+    // char buf[64];
+    // sprintf(buf, "JS X=%d Y=%d R=%.2f SR=%.2f", js.rawX, js.rawY, js.rawRatioLR, js.steppedRatioLR);
+    // Serial.println(buf);
 
     // If the joystick is within the deadzone, stop the motors
     if (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE) {
-        mt.left = 0;
-        mt.right = 0;
-        mt.skipSlewRate = false;
+       
+        // Apply braking by setting motors to a small reverse value
+        if (shouldApplyBraking(prevLeft, prevRight, mt.left, mt.right)) {
+            mt.left = (prevLeft > 0) ? -MIN_MOTOR_SPEED : (prevLeft < 0) ? MIN_MOTOR_SPEED : 0;
+            mt.right = (prevRight > 0) ? -MIN_MOTOR_SPEED : (prevRight < 0) ? MIN_MOTOR_SPEED : 0;
+        }
+        else {
+            mt.left = 0;
+            mt.right = 0;
+            mt.skipSlewRate = false;
+        }
+
         return mt;
     }
 
@@ -204,6 +213,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         mt.left = sp - offset_half;
         mt.right = sp + offset_half;
 
+        mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
+
         return mt;
     }
     else if (js.rawY < BACKWARD_THRESHOLD)
@@ -212,8 +223,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         mt.left = sp + offset_half; // For reverse, swap sign
         mt.right = sp - offset_half;
 
-        if (fabs(js.steppedRatioLR) <= 0.15f)
-            mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
+        mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
+
         return mt; // ignore turn tank mixing at low x-deflection
     }
 
@@ -239,21 +250,43 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
 
     mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
 
-    return mt;
+    return mt;  
 }
 
+
+/// @brief Determine if the slew rate should be skipped based on joystick input.
+/// @param prevLeft The previous left motor speed.
+/// @param prevRight The previous right motor speed.
+/// @param targetLeft The target left motor speed.
+/// @param targetRight The target right motor speed.
+/// @return True if the slew rate should be skipped, false otherwise.
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight)
 {
     // Skip slew rate if direction reverses
-    return ((prevLeft > 0 && targetLeft < 0) || (prevLeft < 0 && targetLeft > 0) ||
-            (prevRight > 0 && targetRight < 0) || (prevRight < 0 && targetRight > 0));
+    if ((prevLeft > 0 && targetLeft < 0) || (prevLeft < 0 && targetLeft > 0) ||
+            (prevRight > 0 && targetRight < 0) || (prevRight < 0 && targetRight > 0))
+        return true;
+
+    // skip if aggressive forward/backward (large deflection)
+    if ((prevLeft >= 0 && targetLeft >= 0 && targetLeft > ( 0.90f * MAX_SPEED)) ||
+        (prevLeft <= 0 && targetLeft <= 0 && targetLeft < (-0.90f * MAX_SPEED)) ||
+        (prevRight >= 0 && targetRight >= 0 && targetRight > (0.90f * MAX_SPEED)) ||
+        (prevRight <= 0 && targetRight <= 0 && targetRight < (-0.90f * MAX_SPEED)))
+        return true;
+
+    // skip if aggressive turn (sharp left/right)
+    if (targetLeft <= -MIN_MOTOR_SPEED && targetRight >= MIN_MOTOR_SPEED ||
+        targetLeft >= MIN_MOTOR_SPEED && targetRight <= -MIN_MOTOR_SPEED)
+        return true;
+
+    return false;
 }
 
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight)
 {
     // Only brake when stopping from motion (not on direction reversal)
     return (targetLeft == 0 && targetRight == 0 &&
-            (abs(prevLeft) > 0 || abs(prevRight) > 0));
+        (abs(prevLeft) >= BRAKE_APPLY_THRESHOLD || abs(prevRight) >= BRAKE_APPLY_THRESHOLD));
 }
 
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton)

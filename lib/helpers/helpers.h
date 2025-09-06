@@ -5,18 +5,22 @@
 #endif
 
 // Constants
+const int MAX_ADC_VALUE    = 1023;  // Maximum ADC value for 10-bit ADC (0-1023 range)
 const int MAX_SPEED        = 255;
-const int MIN_MOTOR_SPEED  = 70; // minimum speed to avoid stalling, can be adjusted
-const int MOTOR_DEADZONE   = 10; // motor values within this range of zero are considered stopped
+const int MIN_MOTOR_SPEED  = 70;    // minimum speed to avoid stalling, can be adjusted
+const int MOTOR_DEADZONE   = 10;    // motor values within this range of zero are considered stopped
 
-const int LR_OFFSET         = -10;        // Left/Right balance offset, +ve = more right speed, -ve = more left speed
+const int LR_OFFSET         = -10;  // Left/Right balance offset, +ve = more right speed, -ve = more left speed
 
-const int MIN_DISTANCE     = 30;   // Minimum distance in cm before turning
-const int TURN_TIME        = 800;     // Time to turn in milliseconds
-const int SCAN_INTERVAL    = 300; // Time between distance measurements
+const int MIN_DISTANCE     = 30;    // Minimum distance in cm before turning
+const int TURN_TIME        = 800;   // Time to turn in milliseconds
+const int SCAN_INTERVAL    = 300;   // Time between distance measurements
 
-const int LOOP_DELAY_MS = 1; // how often we run the main loop
-const int RAMP_STEP = 30;    // how many speed units we change per loop, less = smoother but slower response
+const int LOOP_DELAY_MS = 1;        // how often we run the main loop
+const int RAMP_STEP = 30;           // how many speed units we change per loop, less = smoother but slower response
+
+const int JOYSTICK_CENTER = 512;    // Center position of joystick (0-1023 range)
+const int JOYSTICK_DEADZONE = 30;   // deadzone around center based on joystick variance
 
 // Voltage Divider Constants (shared between transmitter and receiver)
 // Current configuration: R1 = 276K (3 x 92K), R2 = 100K
@@ -26,16 +30,13 @@ const float VOLTAGE_DIVIDER_RATIO = 3.76f;        // (R1 + R2) / R2 = (276K + 10
 const float VOLTAGE_CALIBRATION_BATTERY = 12.27f; // Actual battery voltage when ADC reads maximum
 const float VOLTAGE_CALIBRATION_ADC_PIN = 3.29f;  // Voltage at ADC pin when battery = 12.27V
 
-// 2) Compute target speeds in some basic scenarios => FWD/BWD, L/R (sharp turn)
-//    constaint to MIN_MOTOR_SPEED, maxMotorSpeed and apply ramping
-const int JOYSTICK_CENTER = 512;                        // Center position of joystick (0-1023 range)
-const int JOYSTICK_DEADZONE = 30;                       // deadzone around center based on joystick variance
-const int MAX_ADC_VALUE = 1023;                         // Maximum ADC value for 10-bit ADC (0-1023 range)
-const int FORWARD_THRESHOLD = JOYSTICK_CENTER + JOYSTICK_DEADZONE;  // threshold to start forward movement
-const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // threshold to start backward movement
-const float FULL_TURN_THRESHOLD = 0.6f; // threshold (as a percentage of max X deflection) for full in-place turn
-// function declarations
-int slewRateLimit(int current, int target);
+
+const int PACKET_HISTORY_SIZE = 32; // Number of packets to track for success rate
+extern uint32_t packetHistory;
+extern uint8_t packetIndex;
+
+void updatePacketHistory(bool success);
+float getSuccessRate();
 
 #ifdef ARDUINO
 String pad5(int val);
