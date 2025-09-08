@@ -275,8 +275,8 @@ bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetR
         return true;
 
     // skip if aggressive turn (sharp left/right)
-    if (targetLeft <= -MIN_MOTOR_SPEED && targetRight >= MIN_MOTOR_SPEED ||
-        targetLeft >= MIN_MOTOR_SPEED && targetRight <= -MIN_MOTOR_SPEED)
+    if ((targetLeft <= -MIN_MOTOR_SPEED && targetRight >= MIN_MOTOR_SPEED) ||
+        (targetLeft >= MIN_MOTOR_SPEED && targetRight <= -MIN_MOTOR_SPEED))
         return true;
 
     return false;

@@ -45,7 +45,7 @@ int calculateLeftRightPercent(int x) {
     }
 
     float leftRightPercent;
-    if (x > xCenter) {
+    if ((unsigned int)x > xCenter) {
         leftRightPercent = ((float)(x - xCenter) / (float)(xMax - xCenter)) * 100.0f;
     } else {
         leftRightPercent = ((float)(x - xMin) / (float)(xCenter - xMin)) * 100.0f - 100.0f;
