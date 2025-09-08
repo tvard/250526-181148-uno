@@ -20,7 +20,7 @@ const int LEFT_MOTOR_IN1 = 9;   // L293D PIN 15 (Input 3)
 const int BUZZER_PIN = 8;
 const int NRF_CE_PIN = 10;   // CE pin  
 const int NRF_CSN_PIN = A0;  // CSN pin - works perfectly as digital pin
-const int VOLTAGE_ADC_PIN = A1; // Analog voltage sensing pin
+const int VOLTAGE_ADC_PIN = A2; // Analog voltage sensing pin
 
 // Radio configuration - MUST MATCH TRANSMITTER
 const int RADIO_CHANNEL = 76;
@@ -94,6 +94,9 @@ int freeMemory()
 
 void setup()
 {
+  analogReference(3.3); // 3.3V reference
+  pinMode(VOLTAGE_ADC_PIN, INPUT);
+
   Serial.begin(9600);
   delay(1000);
 
@@ -284,7 +287,7 @@ void manualMode()
     // Update packet history with failure
     updatePacketHistory(false);
 
-    Serial.println("RF SIGNAL LOSS: STOPPING...");
+    // Serial.println("RF SIGNAL LOSS: STOPPING...");
     rfLostCounter = 441; // Prevent overflow
   }
 }
@@ -585,6 +588,9 @@ void printStatusReport()
   float batteryVoltage = (adcValue * VOLTAGE_ADC_REFERENCE * VOLTAGE_CALIBRATION_BATTERY) / ((float)MAX_ADC_VALUE * VOLTAGE_CALIBRATION_ADC_PIN);
   Serial.print(pad5f(batteryVoltage));
   Serial.print("V");
+  Serial.print(" (");
+  Serial.print(pad5f(adcValue));
+  Serial.print(")");
 
   // Memory
   extern int __heap_start, *__brkval;
