@@ -16,9 +16,9 @@ const int JOYSTICK_DEADZONE = 30;   // deadzone around center based on joystick 
 // Current configuration: R1 = 276K (3 x 92K), R2 = 100K
 // Arduino: 3.3V/8MHz, ADC reference = 3.29V measured
 const float VOLTAGE_ADC_REFERENCE = 3.29f;        // Measured ADC reference voltage (3.3V Arduino)
-const float VOLTAGE_DIVIDER_RATIO = 3.76f;        // (R1 + R2) / R2 = (276K + 100K) / 100K = 3.76
-const float VOLTAGE_CALIBRATION_BATTERY = 12.27f; // Actual battery voltage when ADC reads maximum
-const float VOLTAGE_CALIBRATION_ADC_PIN = 3.29f;  // Voltage at ADC pin when battery = 12.27V
+const float VOLTAGE_DIVIDER_RATIO = (276.0f + 97.5f) / 97.5f; // ≈ 3.831
+const float VOLTAGE_CALIBRATION_BATTERY = 12.18f; // Actual battery voltage when ADC reads maximum
+const float VOLTAGE_CALIBRATION_ADC_PIN = 3.19f;  // Voltage at ADC pin when battery = 12.19V
 
 
 const int PACKET_HISTORY_SIZE = 32; // Number of packets to track for success rate

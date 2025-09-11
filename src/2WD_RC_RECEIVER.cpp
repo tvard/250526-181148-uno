@@ -50,6 +50,7 @@ struct __attribute__((packed)) RxData
 
 // Global objects - dynamic allocation for memory efficiency
 RF24 *radio = nullptr;
+RxData rxData = {0, 0, 0, 0};
 
 // Control variables
 bool autoMode = false;
@@ -64,7 +65,7 @@ bool joystickButton = false;
 int freeMemory();
 void initRadio();
 bool readRFSignals();
-void printStatusReport();
+void printStatusReport(const RxData &rxData, bool isRead);
 uint8_t calculateChecksum(const JoystickData &data);
 uint8_t calculateRxCRC(const RxData &data);
 void manualMode();
@@ -72,6 +73,7 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed);
 void stopMotors();
 void beep(int duration);
 void beep(bool isActive);
+bool updateVoltageReading(RxData &rxData);
 
 // Entertainer melody functions
 struct EntertainerState
@@ -94,7 +96,6 @@ int freeMemory()
 
 void setup()
 {
-  analogReference(3.3); // 3.3V reference
   pinMode(VOLTAGE_ADC_PIN, INPUT);
 
   Serial.begin(9600);
@@ -180,9 +181,6 @@ void initRadio()
 
 void loop()
 {
-  // Prepare response data for transmitter (do this FIRST)
-  int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
-  uint8_t voltage8bit = map(voltageRaw, 0, MAX_ADC_VALUE, 0, 255);
   uint8_t mode = autoMode ? 1 : 0; // 0 = manual, 1 = auto
   uint8_t state = 0;               // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
   if (leftSpeed > 0 && rightSpeed > 0)
@@ -193,34 +191,20 @@ void loop()
     state = 3;
 
   // Pack response data
-  RxData txData;
-  txData.voltage = voltage8bit;
-  txData.status = (mode << 2) | state; // Pack mode and state
-  txData.crc = calculateRxCRC(txData);
-  txData.successRate = (uint8_t)(getSuccessRate() * 255); // Scale to 0-255
+  // Prepare response data for transmitter
+
+  updateVoltageReading(rxData);
+
+  rxData.status = (mode << 2) | state; // Pack mode and state
+  rxData.crc = calculateRxCRC(rxData);
+  rxData.successRate = (uint8_t)(getSuccessRate() * 255); // Scale to 0-255
 
   // Pre-load ACK payload for next transmission (ALWAYS do this)
   if (radio)
   {
-    radio->writeAckPayload(0, &txData, sizeof(RxData));
+    radio->writeAckPayload(0, &rxData, sizeof(RxData));
   }
 
-  // Now handle manual mode (receiving and processing)
-  manualMode();
-
-  // Status reporting every n milliseconds
-  static unsigned long lastStatusTime = 0;
-  if (millis() - lastStatusTime > 250)
-  {
-    printStatusReport();
-    lastStatusTime = millis();
-  }
-
-  delay(LOOP_DELAY_MS);
-}
-
-void manualMode()
-{
   static int prevLeftSpeed = 0, prevRightSpeed = 0;
   static int rfLostCounter = 0;
   static bool brakingApplied = false;
@@ -245,9 +229,9 @@ void manualMode()
     else
     {
       if (nextLeft != mt.left)
-  nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
+        nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
       if (nextRight != mt.right)
-  nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
+        nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
     }
 
     // Braking logic
@@ -290,7 +274,18 @@ void manualMode()
     // Serial.println("RF SIGNAL LOSS: STOPPING...");
     rfLostCounter = 441; // Prevent overflow
   }
+
+  // Status reporting every n milliseconds
+  static unsigned long lastStatusTime = 0;
+  if (millis() - lastStatusTime > 250)
+  {
+    printStatusReport(rxData, isRead);
+    lastStatusTime = millis();
+  }
+
+  delay(LOOP_DELAY_MS);
 }
+
 
 bool readRFSignals()
 {
@@ -487,7 +482,7 @@ bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt)
   return false; // Simplified for this optimization
 }
 
-void printStatusReport()
+void printStatusReport(const RxData &rxData, bool isRead)
 {
 
   static bool isFirstReport = true;
@@ -499,24 +494,12 @@ void printStatusReport()
     isFirstReport = false;
   }
 
-  // Radio status
-  Serial.print("Radio:");
-  if (radio && radio->isChipConnected())
-  {
-    Serial.print(padString("OK", 4));
-    Serial.print(" | Data:");
-    Serial.print(radio->available() ? " YES" : "  NO");
-
-    // Display success rate
-    float successRate = getSuccessRate();
-    Serial.print(" | Success:");
-    Serial.print(pad3s((int)(successRate * 100.0)));
-    Serial.print("%");
-  }
-  else
-  {
-    Serial.print("FAIL | Data:  -- | Success: --%");
-  }
+  // Radio status 
+  Serial.print("NRF Data:");
+  Serial.print(isRead ? " YES" : "  NO");
+  Serial.print(" | Success:");
+  Serial.print(pad3s((int)(rxData.successRate * 100.0)));
+  Serial.print("%");
 
   // Current joystick values
   Serial.print(" | JS X:");
@@ -581,14 +564,13 @@ void printStatusReport()
     Serial.print(padString(String(ratio), 6));
   }
 
-  // Voltage
+  // Voltage (8bit => to actual voltage)
   Serial.print(" | Bat:");
-  float adcValue = analogRead(VOLTAGE_ADC_PIN);
-  float batteryVoltage = (adcValue * VOLTAGE_ADC_REFERENCE * VOLTAGE_CALIBRATION_BATTERY) / ((float)MAX_ADC_VALUE * VOLTAGE_CALIBRATION_ADC_PIN);
+  float batteryVoltage = rxData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0;
   Serial.print(pad5f(batteryVoltage));
   Serial.print("V");
-  Serial.print(" (");
-  Serial.print(pad5f(adcValue));
+  Serial.print(" (ADC: ");
+  Serial.print(pad5f(map(rxData.voltage, 0, 255, 0, MAX_ADC_VALUE)));
   Serial.print(")");
 
   // Memory
@@ -609,4 +591,63 @@ void printStatusReport()
   Serial.print("s");
 
   Serial.println("");
+}
+
+// Function to handle voltage reading with averaging and spike/drop detection
+// Returns true if a new reading was taken, false if still waiting for timing
+bool updateVoltageReading(RxData &rxData) {
+  static unsigned long lastVoltageReading = 0;
+  static uint16_t voltageBuffer[4] = {0};
+  static uint8_t bufferIndex = 0;
+  static bool bufferFull = false;
+  static uint16_t lastStableReading = 0;
+  static bool firstReading = true;
+  
+  // Check timing - return false if not time yet
+  if (millis() - lastVoltageReading < 250) {
+    return false;
+  }
+  
+  // Take the ADC reading
+  int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
+  bool useReading = true;
+  
+  // Check for spikes/drops BEFORE storing in buffer
+  if (!firstReading) {
+    int16_t deviation = (int16_t)voltageRaw - (int16_t)lastStableReading;
+    if (abs(deviation) > 80) {  // ~0.25V change threshold
+      useReading = false;  // DISCARD this outlier reading
+      Serial.print("Voltage spike/drop detected: ");
+      Serial.println(deviation);
+    }
+  }
+  
+  uint16_t averagedRaw;
+  
+  if (useReading) {
+    // Good reading - store in buffer and calculate average
+    voltageBuffer[bufferIndex] = voltageRaw;
+    bufferIndex = (bufferIndex + 1) % 4;
+    if (bufferIndex == 0) bufferFull = true;
+    
+    uint32_t sum = 0;
+    uint8_t count = bufferFull ? 4 : bufferIndex;
+    for (uint8_t i = 0; i < count; i++) {
+      sum += voltageBuffer[i];
+    }
+    averagedRaw = sum / count;
+    lastStableReading = averagedRaw;
+  } else {
+    // Bad reading - use previous stable value, don't update buffer
+    averagedRaw = lastStableReading;
+  }
+
+  // Convert to 8-bit and store
+  uint8_t voltage8bit = map(averagedRaw, 0, MAX_ADC_VALUE, 0, 255);
+  rxData.voltage = voltage8bit;
+
+  firstReading = false;
+  lastVoltageReading = millis();
+  
+  return true;  // New reading was taken
 }
