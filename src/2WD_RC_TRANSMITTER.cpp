@@ -109,7 +109,6 @@ void setup() {
   
   initRadio();
   
-
   // Set min/max for percent mapping (accounting for Y-axis inversion in loop)
   xMin = -5;
   xMax = 1018;
