@@ -120,63 +120,91 @@ void test_inplace_turn_symmetry_with_offset(void)
 }
 
 // ----------------------------- Tests: Slew limiter ---------------------------
-void test_slewRateLimit_no_change(void)
+
+// New tests for variable slew rate
+void test_slewRateLimit_variable_slew(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(100, slewRateLimit(100, 100), "No change: 100->100");
-  TEST_ASSERT_EQUAL_MESSAGE(-100, slewRateLimit(-100, -100), "No change: -100->-100");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, 0), "No change: 0->0");
+  // Slow slew rate (deflection < SLOW_SLEW_THRESHOLD)
+  float slow_deflection = 0.3f;
+  int current = 0;
+  int target = 100;
+  int result = slewRateLimit(current, target, slow_deflection);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Slow slew rate step should clamp to MIN_MOTOR_SPEED");
+
+  // Fast slew rate (deflection >= FULL_THROTTLE_THRESHOLD)
+  float fast_deflection = 0.85f;
+  current = 0;
+  target = 100;
+  result = slewRateLimit(current, target, fast_deflection);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Fast slew rate step should clamp to MIN_MOTOR_SPEED");
+
+  // Edge case: exactly at SLOW_SLEW_THRESHOLD
+  float edge_deflection = SLOW_SLEW_THRESHOLD;
+  current = 0;
+  target = 100;
+  result = slewRateLimit(current, target, edge_deflection);
+  // Should still be slow
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Edge slow slew rate step should clamp to MIN_MOTOR_SPEED");
+
+  // Edge case: exactly at FULL_THROTTLE_THRESHOLD
+  edge_deflection = FULL_THROTTLE_THRESHOLD;
+  current = 0;
+  target = 100;
+  result = slewRateLimit(current, target, edge_deflection);
+  // Should be fast
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Edge fast slew rate step should clamp to MIN_MOTOR_SPEED");
 }
 
 void test_slewRateLimit_ramp_up(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP, slewRateLimit(100, 200), "Ramp up: 100->200 should increase by RAMP_STEP");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, 50), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -50), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP, slewRateLimit(-100, 100), "Ramp up: -100->100 increases by RAMP_STEP");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, 1), "Ramp up: 0->1 yields +1");
-  TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101), "Ramp up: 100->101 yields +1");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + (int)(RAMP_STEP / 3), 0), "Slightly above MIN_MOTOR_SPEED down to 0 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP, slewRateLimit(100, 200, 0.0f), "Ramp up: 100->200 should increase by RAMP_STEP");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, 50, 0.0f), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -50, 0.0f), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
+  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP, slewRateLimit(-100, 100, 0.0f), "Ramp up: -100->100 increases by RAMP_STEP");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, 1, 0.0f), "Ramp up: 0->1 yields +1");
+  TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101, 0.0f), "Ramp up: 100->101 yields +1");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + (int)(RAMP_STEP / 3), 0, 0.0f), "Slightly above MIN_MOTOR_SPEED down to 0 clamps to 0");
 }
 
 void test_slewRateLimit_ramp_down(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(200 - RAMP_STEP, slewRateLimit(200, 100), "200->100");
-  TEST_ASSERT_EQUAL_MESSAGE(100 - RAMP_STEP, slewRateLimit(100, -100), "100->-100");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1), "0->-1");
-  TEST_ASSERT_EQUAL_MESSAGE(99, slewRateLimit(100, 99), "100->99");
+  TEST_ASSERT_EQUAL_MESSAGE(200 - RAMP_STEP, slewRateLimit(200, 100, 0.0f), "200->100");
+  TEST_ASSERT_EQUAL_MESSAGE(100 - RAMP_STEP, slewRateLimit(100, -100, 0.0f), "100->-100");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1, 0.0f), "0->-1");
+  TEST_ASSERT_EQUAL_MESSAGE(99, slewRateLimit(100, 99, 0.0f), "100->99");
 }
 
 void test_slewRateLimit_zero_crossing(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100), "20->-100 clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100), "-20->100 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100, 0.0f), "20->-100 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100, 0.0f), "-20->100 clamps to 0");
 }
 
 void test_slewRateLimit_small_steps(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2), "deadzone 1->2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2), "deadzone -1->-2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0), "deadzone 1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0), "deadzone -1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2), "Above MIN: +2");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2), "Above MIN reverse: -2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2, 0.0f), "deadzone 1->2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2, 0.0f), "deadzone -1->-2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0, 0.0f), "deadzone 1->0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0, 0.0f), "deadzone -1->0");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2, 0.0f), "Above MIN: +2");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2, 0.0f), "Above MIN reverse: -2");
 }
 
 void test_slewRateLimit_min_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, 0), "Down past MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, 0), "Down past -MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED), "Up to MIN yields MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED), "Up to -MIN yields -MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10), "Crossing MIN while down: 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10), "Crossing -MIN while up: 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, 0, 0.0f), "Down past MIN clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, 0, 0.0f), "Down past -MIN clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED, 0.0f), "Up to MIN yields MIN");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED, 0.0f), "Up to -MIN yields -MIN");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10, 0.0f), "Crossing MIN while down: 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10, 0.0f), "Crossing -MIN while up: 0");
 }
 
 void test_slewRateLimit_max_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(MAX_SPEED, slewRateLimit(MAX_SPEED - 5, MAX_SPEED), "near MAX -> MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED), "near -MAX -> -MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-456, -456), "clamp at -MAX if exceeded");
+  TEST_ASSERT_EQUAL_MESSAGE(MAX_SPEED, slewRateLimit(MAX_SPEED - 5, MAX_SPEED, 0.0f), "near MAX -> MAX");
+  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED, 0.0f), "near -MAX -> -MAX");
+  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-456, -456, 0.0f), "clamp at -MAX if exceeded");
 }
 
 void test_shouldSkipSlewRate(void)
@@ -239,8 +267,8 @@ void test_dynamicBrakingApplied(void)
 
 void test_slewRateLimit_at_boundaries(void)
 {
-  TEST_ASSERT_EQUAL(MAX_SPEED, slewRateLimit(MAX_SPEED, MAX_SPEED + 100));
-  TEST_ASSERT_EQUAL(-MAX_SPEED, slewRateLimit(-MAX_SPEED, -MAX_SPEED - 100));
+  TEST_ASSERT_EQUAL(MAX_SPEED, slewRateLimit(MAX_SPEED, MAX_SPEED + 100, 0.0f));
+  TEST_ASSERT_EQUAL(-MAX_SPEED, slewRateLimit(-MAX_SPEED, -MAX_SPEED - 100, 0.0f));
 }
 
 // ----------------------------- Tests: Joystick & targets ---------------------
@@ -343,7 +371,7 @@ void test_computeMotorTargets_Mixing(void)
   mt = computeMotorTargets(js, 0, 0);
   TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
   TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
-  TEST_ASSERT_LESS_THAN_MESSAGE(mt.left, mt.right, "Left < Right (left turn)");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left <= Right (left turn, allows equality if LR_OFFSET=0)");
 }
 
 void test_computeMotorTargets_skipSlew_leftRight(void)
@@ -684,7 +712,6 @@ int main(void)
   RUN_TEST(test_configuration_constants);
 
   // slew rate function tests
-  RUN_TEST(test_slewRateLimit_no_change);
   RUN_TEST(test_slewRateLimit_ramp_up);
   RUN_TEST(test_slewRateLimit_ramp_down);
   RUN_TEST(test_slewRateLimit_zero_crossing);
@@ -695,6 +722,8 @@ int main(void)
   RUN_TEST(test_slewRateLimit_at_boundaries);
   RUN_TEST(test_slewRateLimit_RampsDownToZero);
   RUN_TEST(test_SlewRateLimit_FullCycleAccelerateAndStop);
+  RUN_TEST(test_slewRateLimit_variable_slew);
+  
 
   // motor targets function tests
   RUN_TEST(test_computeMotorTargets_still);

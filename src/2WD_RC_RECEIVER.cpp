@@ -245,9 +245,9 @@ void manualMode()
     else
     {
       if (nextLeft != mt.left)
-        nextLeft = slewRateLimit(nextLeft, mt.left);
+  nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
       if (nextRight != mt.right)
-        nextRight = slewRateLimit(nextRight, mt.right);
+  nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
     }
 
     // Braking logic
@@ -373,7 +373,6 @@ float getSuccessRate() {
 // Motor control functions (unchanged for space - your existing implementations)
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
-  // Your existing implementation
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
@@ -421,14 +420,14 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   {
     if (leftSpeed >= 0)
     {
-      digitalWrite(LEFT_MOTOR_IN1, LOW);
-      digitalWrite(LEFT_MOTOR_IN2, HIGH);
+      digitalWrite(LEFT_MOTOR_IN1, HIGH);
+      digitalWrite(LEFT_MOTOR_IN2, LOW);
       analogWrite(LEFT_MOTOR_EN, leftSpeed);
     }
     else
     {
-      digitalWrite(LEFT_MOTOR_IN1, HIGH);
-      digitalWrite(LEFT_MOTOR_IN2, LOW);
+      digitalWrite(LEFT_MOTOR_IN1, LOW);
+      digitalWrite(LEFT_MOTOR_IN2, HIGH);
       analogWrite(LEFT_MOTOR_EN, -leftSpeed);
     }
     prevLeftSpeed = leftSpeed;

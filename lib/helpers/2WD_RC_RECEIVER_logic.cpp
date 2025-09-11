@@ -67,18 +67,24 @@ struct
 /// @param current The current speed value.
 /// @param target The desired target speed value.
 /// @return The new speed value after applying the slew rate limit.
-int slewRateLimit(int current, int target)
+// Variable slew rate: pass in joystick deflection (0.0-1.0) to select slew rate
+int slewRateLimit(int current, int target, float deflection)
 {
+    int rampStep = RAMP_STEP_SLOW;
+    if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD) {
+        rampStep = RAMP_STEP_FAST;
+    }
+
     int delta = target - current;
     int next;
 
-    if (delta > RAMP_STEP)
+    if (delta > rampStep)
     {
-        next = current + RAMP_STEP;
+        next = current + rampStep;
     }
-    else if (delta < -RAMP_STEP)
+    else if (delta < -rampStep)
     {
-        next = current - RAMP_STEP;
+        next = current - rampStep;
     }
     else
     {
