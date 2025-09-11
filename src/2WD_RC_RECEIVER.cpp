@@ -602,6 +602,7 @@ bool updateVoltageReading(RxData &rxData) {
   static bool bufferFull = false;
   static uint16_t lastStableReading = 0;
   static bool firstReading = true;
+  static uint8_t consecutiveOutliers = 0;
   
   // Check timing - return false if not time yet
   if (millis() - lastVoltageReading < 250) {
@@ -616,9 +617,21 @@ bool updateVoltageReading(RxData &rxData) {
   if (!firstReading) {
     int16_t deviation = (int16_t)voltageRaw - (int16_t)lastStableReading;
     if (abs(deviation) > 80) {  // ~0.25V change threshold
-      useReading = false;  // DISCARD this outlier reading
-      Serial.print("Voltage spike/drop detected: ");
-      Serial.println(deviation);
+      consecutiveOutliers++;
+      if (consecutiveOutliers >= 3) {
+        // 3 consecutive outliers = probably real voltage change
+        useReading = true;
+        consecutiveOutliers = 0;  // Reset counter
+        Serial.println("Persistent voltage change detected - accepting");
+      } else {
+        useReading = false;  // Still filtering as noise
+        Serial.print("Voltage spike/drop detected (");
+        Serial.print(consecutiveOutliers);
+        Serial.print("/3): ");
+        Serial.println(deviation);
+      }
+    } else {
+      consecutiveOutliers = 0;  // Reset counter for normal readings
     }
   }
   
