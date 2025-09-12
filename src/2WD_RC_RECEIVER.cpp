@@ -216,6 +216,7 @@ void loop()
     rfLostCounter = 0; // Reset RF lost counter
 
     JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
+    // computeMotorTargets now encapsulates slew rate and braking logic
     MotorTargets mt = computeMotorTargets(js, leftSpeed, rightSpeed);
 
     // Slew rate logic
@@ -255,6 +256,10 @@ void loop()
     setMotorSpeeds(outputLeft, outputRight);
     prevLeftSpeed = leftSpeed;
     prevRightSpeed = rightSpeed;
+
+    leftSpeed = mt.left;
+    rightSpeed = mt.right;
+    setMotorSpeeds(mt.outputLeft, mt.outputRight);
 
     // Buzzer feedback
     beep(js.buzzerOn);
@@ -316,12 +321,14 @@ bool readRFSignals()
     else
     {
       // Checksum mismatch
-      Serial.println("");
-      Serial.print("!!! Checksum error: expected ");
-      Serial.print(calculatedChecksum);
-      Serial.print(", received ");
-      Serial.print(receivedData.checksum);
-      Serial.println(" !!! ");
+      if (Serial) {
+        Serial.println("");
+        Serial.print("!!! Checksum error: expected ");
+        Serial.print(calculatedChecksum);
+        Serial.print(", received ");
+        Serial.print(receivedData.checksum);
+        Serial.println(" !!! ");
+      }
       consecutiveFailures++;
     }
   }
@@ -374,15 +381,16 @@ void setMotorSpeeds(int leftSpeed, int rightSpeed)
   static int prevLeftSpeed = 0;
   static int prevRightSpeed = 0;
 
-  if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) &&
-      ((leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0)))
+  // Enforce MIN_MOTOR_SPEED for both forward/reverse and pure turning
+  bool sameDirection = (leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0);
+  bool pureTurning = (leftSpeed * rightSpeed < 0) && (abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED);
+  if ((abs(leftSpeed) >= MIN_MOTOR_SPEED || abs(rightSpeed) >= MIN_MOTOR_SPEED) && (sameDirection || pureTurning))
   {
-    if (abs(leftSpeed) < MIN_MOTOR_SPEED || abs(rightSpeed) < MIN_MOTOR_SPEED)
-    {
-      int diff = MIN_MOTOR_SPEED - min(abs(leftSpeed), abs(rightSpeed));
-      leftSpeed += leftSpeed > 0 ? diff : -diff;
-      rightSpeed += rightSpeed > 0 ? diff : -diff;
-    }
+    // For both cases, ensure each side is at least MIN_MOTOR_SPEED if nonzero
+    if (abs(leftSpeed) < MIN_MOTOR_SPEED && leftSpeed != 0)
+      leftSpeed = (leftSpeed > 0) ? MIN_MOTOR_SPEED : -MIN_MOTOR_SPEED;
+    if (abs(rightSpeed) < MIN_MOTOR_SPEED && rightSpeed != 0)
+      rightSpeed = (rightSpeed > 0) ? MIN_MOTOR_SPEED : -MIN_MOTOR_SPEED;
 
     int diff = leftSpeed - rightSpeed;
     if (leftSpeed > MAX_SPEED)
@@ -482,7 +490,7 @@ bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt)
   return false; // Simplified for this optimization
 }
 
-void printStatusReport(const RxData &rxData, bool isRead)
+void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 {
 
   static bool isFirstReport = true;
@@ -510,57 +518,47 @@ void printStatusReport(const RxData &rxData, bool isRead)
   Serial.print(joystickButton ? " ON" : "OFF");
 
   // Motor speeds
+  // use global lastOutputLeft, lastOutputRight
   Serial.print(" | Motors L:");
-  Serial.print(pad4s(leftSpeed));
+  Serial.print(pad4s(mt.left));
   Serial.print(" R:");
-  Serial.print(pad4s(rightSpeed));
+  Serial.print(pad4s(mt.right));
 
   // Direction indicator
   Serial.print(" Dir:");
   String direction;
-  if (leftSpeed == 0 && rightSpeed == 0)
-  {
+  if (mt.left == 0 && mt.right == 0)
     direction = "STOP";
-  }
-  else if (leftSpeed > 0 && rightSpeed > 0)
-  {
+  else if (mt.left > 0 && mt.right > 0)
     direction = "FWD";
-  }
-  else if (leftSpeed < 0 && rightSpeed < 0)
-  {
+  else if (mt.left < 0 && mt.right < 0)
     direction = "REV";
-  }
-  else if (leftSpeed > rightSpeed)
-  {
+  else if (mt.left > mt.right)
     direction = "RIGHT";
-  }
-  else if (rightSpeed > leftSpeed)
-  {
+  else if (mt.right > mt.left)
     direction = "LEFT";
-  }
   else
-  {
     direction = "MIX";
-  }
-  Serial.print(padString(direction, 6));
+  
+    Serial.print(padString(direction, 6));
 
   // L/R Ratio
   Serial.print(" Ratio:");
-  if (abs(leftSpeed) == 0 && abs(rightSpeed) == 0)
+  if (abs(mt.left) == 0 && abs(mt.right) == 0)
   {
     Serial.print(padString("--", 6));
   }
-  else if (rightSpeed == 0)
+  else if (mt.right == 0)
   {
     Serial.print(padString("L-only", 6));
   }
-  else if (leftSpeed == 0)
+  else if (mt.left == 0)
   {
     Serial.print(padString("R-only", 6));
   }
   else
   {
-    float ratio = (float)leftSpeed / rightSpeed;
+    float ratio = (float)mt.left / mt.right;
     Serial.print(padString(String(ratio), 6));
   }
 
