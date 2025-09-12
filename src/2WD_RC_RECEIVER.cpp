@@ -9,17 +9,17 @@
 #include "2WD_RC_RECEIVER_logic.h"
 
 // Pin Definitions
-const int RIGHT_MOTOR_EN = 5;   // L293D PIN 1 (Enable 1)
-const int RIGHT_MOTOR_IN1 = 3;  // L293D PIN 2 (Input 1)
-const int RIGHT_MOTOR_IN2 = 2;  // L293D PIN 7 (Input 2)
+const int RIGHT_MOTOR_EN = 5;  // L293D PIN 1 (Enable 1)
+const int RIGHT_MOTOR_IN1 = 3; // L293D PIN 2 (Input 1)
+const int RIGHT_MOTOR_IN2 = 2; // L293D PIN 7 (Input 2)
 
-const int LEFT_MOTOR_EN = 6;    // L293D PIN 9 (Enable 2)
-const int LEFT_MOTOR_IN2 = 7;   // L293D PIN 10 (Input 4)
-const int LEFT_MOTOR_IN1 = 9;   // L293D PIN 15 (Input 3)
+const int LEFT_MOTOR_EN = 6;  // L293D PIN 9 (Enable 2)
+const int LEFT_MOTOR_IN2 = 7; // L293D PIN 10 (Input 4)
+const int LEFT_MOTOR_IN1 = 9; // L293D PIN 15 (Input 3)
 
 const int BUZZER_PIN = 8;
-const int NRF_CE_PIN = 10;   // CE pin  
-const int NRF_CSN_PIN = A0;  // CSN pin - works perfectly as digital pin
+const int NRF_CE_PIN = 10;      // CE pin
+const int NRF_CSN_PIN = A0;     // CSN pin - works perfectly as digital pin
 const int VOLTAGE_ADC_PIN = A2; // Analog voltage sensing pin
 
 // Radio configuration - MUST MATCH TRANSMITTER
@@ -65,7 +65,7 @@ bool joystickButton = false;
 int freeMemory();
 void initRadio();
 bool readRFSignals();
-void printStatusReport(const RxData &rxData, bool isRead);
+void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt);
 uint8_t calculateChecksum(const JoystickData &data);
 uint8_t calculateRxCRC(const RxData &data);
 void manualMode();
@@ -205,10 +205,9 @@ void loop()
     radio->writeAckPayload(0, &rxData, sizeof(RxData));
   }
 
-  static int prevLeftSpeed = 0, prevRightSpeed = 0;
   static int rfLostCounter = 0;
-  static bool brakingApplied = false;
 
+  MotorTargets mt = {}; 
   bool isRead = readRFSignals();
 
   if (isRead)
@@ -216,47 +215,7 @@ void loop()
     rfLostCounter = 0; // Reset RF lost counter
 
     JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
-    // computeMotorTargets now encapsulates slew rate and braking logic
-    MotorTargets mt = computeMotorTargets(js, leftSpeed, rightSpeed);
-
-    // Slew rate logic
-    int nextLeft = leftSpeed;
-    int nextRight = rightSpeed;
-    if (mt.skipSlewRate)
-    {
-      nextLeft = mt.left;
-      nextRight = mt.right;
-    }
-    else
-    {
-      if (nextLeft != mt.left)
-        nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
-      if (nextRight != mt.right)
-        nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
-    }
-
-    // Braking logic
-    brakingApplied = shouldApplyBraking(prevLeftSpeed, prevRightSpeed, mt.left, mt.right);
-    int outputLeft, outputRight;
-    if (brakingApplied)
-    {
-      outputLeft = -prevLeftSpeed / 4;
-      outputRight = -prevRightSpeed / 4;
-      nextLeft = 0;
-      nextRight = 0;
-    }
-    else
-    {
-      outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
-      outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
-    }
-
-    leftSpeed = nextLeft;
-    rightSpeed = nextRight;
-    setMotorSpeeds(outputLeft, outputRight);
-    prevLeftSpeed = leftSpeed;
-    prevRightSpeed = rightSpeed;
-
+    mt = computeMotorTargets(js, leftSpeed, rightSpeed);
     leftSpeed = mt.left;
     rightSpeed = mt.right;
     setMotorSpeeds(mt.outputLeft, mt.outputRight);
@@ -277,20 +236,21 @@ void loop()
     updatePacketHistory(false);
 
     // Serial.println("RF SIGNAL LOSS: STOPPING...");
-    rfLostCounter = 441; // Prevent overflow
+    rfLostCounter = 441;  // Prevent overflow
   }
-
+  
   // Status reporting every n milliseconds
   static unsigned long lastStatusTime = 0;
-  if (millis() - lastStatusTime > 250)
+
+  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000))
   {
-    printStatusReport(rxData, isRead);
+    // Use last computed MotorTargets for status
+    printStatusReport(rxData, isRead, mt);
     lastStatusTime = millis();
   }
 
   delay(LOOP_DELAY_MS);
 }
-
 
 bool readRFSignals()
 {
@@ -321,7 +281,8 @@ bool readRFSignals()
     else
     {
       // Checksum mismatch
-      if (Serial) {
+      if (Serial)
+      {
         Serial.println("");
         Serial.print("!!! Checksum error: expected ");
         Serial.print(calculatedChecksum);
@@ -354,20 +315,27 @@ uint8_t calculateRxCRC(const RxData &data)
   return (data.voltage ^ data.status) & 0xFF;
 }
 
-void updatePacketHistory(bool success) {
-  if (success) {
+void updatePacketHistory(bool success)
+{
+  if (success)
+  {
     packetHistory |= (1UL << packetIndex);
-  } else {
+  }
+  else
+  {
     packetHistory &= ~(1UL << packetIndex);
   }
   packetIndex = (packetIndex + 1) % PACKET_HISTORY_SIZE;
 }
 
-float getSuccessRate() {
+float getSuccessRate()
+{
   uint32_t hist = packetHistory;
   int count = 0;
-  for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
-    if (hist & 1UL) count++;
+  for (int i = 0; i < PACKET_HISTORY_SIZE; i++)
+  {
+    if (hist & 1UL)
+      count++;
     hist >>= 1;
   }
   return (float)count / PACKET_HISTORY_SIZE;
@@ -502,11 +470,11 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
     isFirstReport = false;
   }
 
-  // Radio status 
+  // Radio status
   Serial.print("NRF Data:");
   Serial.print(isRead ? " YES" : "  NO");
   Serial.print(" | Success:");
-  Serial.print(pad3s((int)(rxData.successRate * 100.0)));
+  Serial.print(pad3s((int)(rxData.successRate / 255.0 * 100.0)));
   Serial.print("%");
 
   // Current joystick values
@@ -539,8 +507,8 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
     direction = "LEFT";
   else
     direction = "MIX";
-  
-    Serial.print(padString(direction, 6));
+
+  Serial.print(padString(direction, 6));
 
   // L/R Ratio
   Serial.print(" Ratio:");
@@ -593,7 +561,8 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 
 // Function to handle voltage reading with averaging and spike/drop detection
 // Returns true if a new reading was taken, false if still waiting for timing
-bool updateVoltageReading(RxData &rxData) {
+bool updateVoltageReading(RxData &rxData)
+{
   static unsigned long lastVoltageReading = 0;
   static uint16_t voltageBuffer[4] = {0};
   static uint8_t bufferIndex = 0;
@@ -601,54 +570,67 @@ bool updateVoltageReading(RxData &rxData) {
   static uint16_t lastStableReading = 0;
   static bool firstReading = true;
   static uint8_t consecutiveOutliers = 0;
-  
+
   // Check timing - return false if not time yet
-  if (millis() - lastVoltageReading < 250) {
+  if (millis() - lastVoltageReading < 250)
+  {
     return false;
   }
-  
+
   // Take the ADC reading
   int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
   bool useReading = true;
-  
+
   // Check for spikes/drops BEFORE storing in buffer
-  if (!firstReading) {
+  if (!firstReading)
+  {
     int16_t deviation = (int16_t)voltageRaw - (int16_t)lastStableReading;
-    if (abs(deviation) > 80) {  // ~0.25V change threshold
+    if (abs(deviation) > 80)
+    { // ~0.25V change threshold
       consecutiveOutliers++;
-      if (consecutiveOutliers >= 3) {
+      if (consecutiveOutliers >= 3)
+      {
         // 3 consecutive outliers = probably real voltage change
         useReading = true;
-        consecutiveOutliers = 0;  // Reset counter
+        consecutiveOutliers = 0; // Reset counter
         Serial.println("Persistent voltage change detected - accepting");
-      } else {
-        useReading = false;  // Still filtering as noise
+      }
+      else
+      {
+        useReading = false; // Still filtering as noise
         Serial.print("Voltage spike/drop detected (");
         Serial.print(consecutiveOutliers);
         Serial.print("/3): ");
         Serial.println(deviation);
       }
-    } else {
-      consecutiveOutliers = 0;  // Reset counter for normal readings
+    }
+    else
+    {
+      consecutiveOutliers = 0; // Reset counter for normal readings
     }
   }
-  
+
   uint16_t averagedRaw;
-  
-  if (useReading) {
+
+  if (useReading)
+  {
     // Good reading - store in buffer and calculate average
     voltageBuffer[bufferIndex] = voltageRaw;
     bufferIndex = (bufferIndex + 1) % 4;
-    if (bufferIndex == 0) bufferFull = true;
-    
+    if (bufferIndex == 0)
+      bufferFull = true;
+
     uint32_t sum = 0;
     uint8_t count = bufferFull ? 4 : bufferIndex;
-    for (uint8_t i = 0; i < count; i++) {
+    for (uint8_t i = 0; i < count; i++)
+    {
       sum += voltageBuffer[i];
     }
     averagedRaw = sum / count;
     lastStableReading = averagedRaw;
-  } else {
+  }
+  else
+  {
     // Bad reading - use previous stable value, don't update buffer
     averagedRaw = lastStableReading;
   }
@@ -659,6 +641,6 @@ bool updateVoltageReading(RxData &rxData) {
 
   firstReading = false;
   lastVoltageReading = millis();
-  
-  return true;  // New reading was taken
+
+  return true; // New reading was taken
 }

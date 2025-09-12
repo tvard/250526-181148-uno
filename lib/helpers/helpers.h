@@ -63,7 +63,10 @@ struct JoystickProcessingResult {
 };
 
 struct MotorTargets {
-    int left;
-    int right;
+    int left;         // Target left speed (raw, before slew/brake)
+    int right;        // Target right speed (raw, before slew/brake)
+    int outputLeft;   // Final output left speed (after slew/brake)
+    int outputRight;  // Final output right speed (after slew/brake)
     bool skipSlewRate;
+    bool brakingApplied;
 };

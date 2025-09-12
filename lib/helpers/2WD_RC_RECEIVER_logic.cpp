@@ -74,49 +74,38 @@ int slewRateLimit(int current, int target, float deflection)
     if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD) {
         rampStep = RAMP_STEP_FAST;
     }
+    else{
+        if (current > MAX_SPEED / 3)
+            return MAX_SPEED / 3; // limit speed for low deflection
+    }
+
 
     int delta = target - current;
     int next;
 
     if (delta > rampStep)
-    {
         next = current + rampStep;
-    }
     else if (delta < -rampStep)
-    {
         next = current - rampStep;
-    }
     else
-    {
         next = target;
-    }
 
     // If both target and next are within the motor deadzone, output zero
     if (next > -MOTOR_DEADZONE && next < MOTOR_DEADZONE &&
         target > -MOTOR_DEADZONE && target < MOTOR_DEADZONE)
-    {
         return 0;
-    }
 
     // Clamp to zero only when ramping down and crossing below MIN_MOTOR_SPEED in the positive or negative direction
     if (current > 0 && next < MIN_MOTOR_SPEED && next > 0)
-    {
         next = 0;
-    }
     else if (current < 0 && next > -MIN_MOTOR_SPEED && next < 0)
-    {
         next = 0;
-    }
 
     // For zero crossing, clamp to zero if we would end up in the weak motor range
     if (current > 0 && next < 0 && next > -MIN_MOTOR_SPEED)
-    {
         next = 0;
-    }
     else if (current < 0 && next > 0 && next < MIN_MOTOR_SPEED)
-    {
         next = 0;
-    }
 
     // Clamp to min/max if outside allowed range
     if (next > MAX_SPEED)
@@ -126,13 +115,9 @@ int slewRateLimit(int current, int target, float deflection)
 
     // Clamp to MIN_MOTOR_SPEED when ramping up and next is between deadzone and MIN_MOTOR_SPEED
     if (next > 0 && next >= MOTOR_DEADZONE && next < MIN_MOTOR_SPEED)
-    {
         next = MIN_MOTOR_SPEED;
-    }
     else if (next < 0 && next <= -MOTOR_DEADZONE && next > -MIN_MOTOR_SPEED)
-    {
         next = -MIN_MOTOR_SPEED;
-    }
 
     return next;
 }
@@ -148,6 +133,8 @@ int slewRateLimit(int current, int target, float deflection)
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLeft, int prevRight)
 {
     MotorTargets mt = {};
+    int nextLeft = prevLeft;
+    int nextRight = prevRight;
   
     // // Debug print
     // char buf[64];
@@ -156,18 +143,20 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
 
     // If the joystick is within the deadzone, stop the motors
     if (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE) {
-       
-        // Apply braking by setting motors to a small reverse value
-        if (shouldApplyBraking(prevLeft, prevRight, mt.left, mt.right)) {
-            mt.left = (prevLeft > 0) ? -MIN_MOTOR_SPEED : (prevLeft < 0) ? MIN_MOTOR_SPEED : 0;
-            mt.right = (prevRight > 0) ? -MIN_MOTOR_SPEED : (prevRight < 0) ? MIN_MOTOR_SPEED : 0;
+        // Stopping: apply braking if needed
+        mt.left = 0;
+        mt.right = 0;
+        mt.skipSlewRate = false;
+        mt.brakingApplied = shouldApplyBraking(prevLeft, prevRight, 0, 0);
+        if (mt.brakingApplied) {
+            mt.outputLeft = -prevLeft / 4;
+            mt.outputRight = -prevRight / 4;
+            nextLeft = 0;
+            nextRight = 0;
+        } else {
+            mt.outputLeft = 0;
+            mt.outputRight = 0;
         }
-        else {
-            mt.left = 0;
-            mt.right = 0;
-            mt.skipSlewRate = false;
-        }
-
         return mt;
     }
 
@@ -176,37 +165,38 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
     // In-place turn - when Y stick is near center (512) AND significant X deflection
     if (abs(js.rawY - JOYSTICK_CENTER) < (0.20f * MAX_ADC_VALUE) && fabs(js.steppedRatioLR) >= JOYSTICK_DEADZONE_RATIO)
     {
-        // Enforce strict symmetry: always use the same base speed for both left/right in-place turns
         int base_sp = MIN_MOTOR_SPEED + 1;
         float offset_half = LR_OFFSET / 2.0f;
-
-        // Left in-place turn: right forward, left backward (if aggressive / high x-deflection)
         if (js.steppedRatioLR < 0)
         {
             if (js.steppedRatioLR <= -0.75f)
-            {
                 mt.left = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
-            }
             else
-            {
-                mt.left = 0; // gentle wider turn
-            }
-
+                mt.left = 0;
             mt.right = max(base_sp + offset_half, MIN_MOTOR_SPEED);
         }
-        // Right in-place turn: left forward, right backward
         else if (js.steppedRatioLR > 0)
         {
             if (js.steppedRatioLR >= 0.75f)
                 mt.right = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
             else
                 mt.right = 0;
-
             mt.left = max(base_sp + offset_half, MIN_MOTOR_SPEED);
         }
-
-        mt.skipSlewRate = (fabs(js.steppedRatioLR) >= 0.90f); // near full x-deflection
-
+        mt.skipSlewRate = (fabs(js.steppedRatioLR) >= 0.90f);
+        // Slew rate logic
+        if (mt.skipSlewRate) {
+            nextLeft = mt.left;
+            nextRight = mt.right;
+        } else {
+            if (nextLeft != mt.left)
+                nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
+            if (nextRight != mt.right)
+                nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
+        }
+        mt.brakingApplied = false;
+        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
+        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         return mt;
     }
 
@@ -218,9 +208,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         sp = map(constrain(js.rawY, FORWARD_THRESHOLD, MAX_ADC_VALUE), FORWARD_THRESHOLD, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
         mt.left = sp - offset_half;
         mt.right = sp + offset_half;
-
         mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
-
+        if (mt.skipSlewRate) {
+            nextLeft = mt.left;
+            nextRight = mt.right;
+        } else {
+            if (nextLeft != mt.left)
+                nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
+            if (nextRight != mt.right)
+                nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
+        }
+        mt.brakingApplied = false;
+        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
+        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         return mt;
     }
     else if (js.rawY < BACKWARD_THRESHOLD)
@@ -228,9 +228,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
         sp = map(constrain(js.rawY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
         mt.left = sp + offset_half; // For reverse, swap sign
         mt.right = sp - offset_half;
-
         mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
-
+        if (mt.skipSlewRate) {
+            nextLeft = mt.left;
+            nextRight = mt.right;
+        } else {
+            if (nextLeft != mt.left)
+                nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
+            if (nextRight != mt.right)
+                nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
+        }
+        mt.brakingApplied = false;
+        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
+        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         return mt; // ignore turn tank mixing at low x-deflection
     }
 
@@ -255,8 +265,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, int prevLef
     }
 
     mt.skipSlewRate = shouldSkipSlewRate(prevLeft, prevRight, mt.left, mt.right);
-
-    return mt;  
+    if (mt.skipSlewRate) {
+        nextLeft = mt.left;
+        nextRight = mt.right;
+    } else {
+        if (nextLeft != mt.left)
+            nextLeft = slewRateLimit(nextLeft, mt.left, 0.0f);
+        if (nextRight != mt.right)
+            nextRight = slewRateLimit(nextRight, mt.right, 0.0f);
+    }
+    mt.brakingApplied = false;
+    mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
+    mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+    return mt;
 }
 
 
