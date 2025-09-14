@@ -38,12 +38,6 @@ struct JoystickData {
   uint8_t checksum;     // 8-bit checksum (matches receiver)
 };
 
-struct __attribute__((packed)) RxData {
-  uint8_t voltage;        // Battery voltage (0-255)
-  uint8_t successRate;    // Rx success rate (0-255)
-  uint8_t status;         // Combined mode + state info
-  uint8_t crc;            // Simple CRC
-};
 
 // Global objects - delay initialization to save startup RAM
 RF24* radio = nullptr;
