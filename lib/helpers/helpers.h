@@ -10,7 +10,7 @@ const int MAX_ADC_VALUE    = 1023;  // Maximum ADC value for 10-bit ADC (0-1023 
 
 const int LOOP_DELAY_MS = 1;        // how often we run the main loop
 const int JOYSTICK_CENTER = 512;    // Center position of joystick (0-1023 range)
-const int JOYSTICK_DEADZONE = 30;   // deadzone around center based on joystick variance
+const int JOYSTICK_DEADZONE = 20;   // deadzone around center based on joystick variance
 
 // Voltage Divider Constants (shared between transmitter and receiver)
 // Current configuration: R1 = 276K (3 x 92K), R2 = 100K
@@ -63,10 +63,20 @@ struct JoystickProcessingResult {
 };
 
 struct MotorTargets {
-    int left;         // Target left speed (raw, before slew/brake)
-    int right;        // Target right speed (raw, before slew/brake)
+    int targetLeft;         // Target left speed (raw, before slew/brake)
+    int targetRight;        // Target right speed (raw, before slew/brake)
     int outputLeft;   // Final output left speed (after slew/brake)
     int outputRight;  // Final output right speed (after slew/brake)
     bool skipSlewRate;
     bool brakingApplied;
+};
+
+
+// Simplified response data for ACK payload - both transmitter and receiver must agree exactly
+struct __attribute__((packed)) RxData
+{
+  uint8_t voltage;     // Battery voltage (0-255)
+  uint8_t successRate; // Rx success rate (0-255)
+  uint8_t status;      // Combined mode + state info
+  uint8_t crc;         // Simple CRC
 };

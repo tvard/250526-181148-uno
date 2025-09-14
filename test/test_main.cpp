@@ -85,7 +85,7 @@ uint16_t yCenter = JOYSTICK_CENTER;
 
 // // --- SUT functions used in tests (declared in headers) -----------------------
 // extern int calculateThrottlePercent(int yAdc);
-// extern int calculateLeftRightPercent(int xAdc);
+// extern int calculateThrottlePercent(int xAdc);
 
 // (Optionally) extern motor speed state, if available in SUT
 extern int leftSpeed;
@@ -111,11 +111,13 @@ void test_inplace_turn_symmetry_with_offset(void)
 {
   // For max in-place left and right, both wheels should have equal magnitude (symmetry), offset is lost due to clamping.
   JoystickProcessingResult js_left = processJoystick(JOYSTICK_CENTER - 500, JOYSTICK_CENTER, false);
-  MotorTargets mt_left = computeMotorTargets(js_left, 0, 0);
+  MotorTargets prevMt_left = {};
+  MotorTargets mt_left = computeMotorTargets(js_left, prevMt_left);
   JoystickProcessingResult js_right = processJoystick(JOYSTICK_CENTER + 500, JOYSTICK_CENTER, false);
-  MotorTargets mt_right = computeMotorTargets(js_right, 0, 0);
-  int abs_left = abs(mt_left.left);
-  int abs_right = abs(mt_right.right);
+  MotorTargets prevMt_right = {};
+  MotorTargets mt_right = computeMotorTargets(js_right, prevMt_right);
+  int abs_left = abs(mt_left.targetLeft);
+  int abs_right = abs(mt_right.targetRight);
   TEST_ASSERT_EQUAL_MESSAGE(abs_left, abs_right, "In-place turn: left and right magnitudes should match");
 }
 
@@ -252,16 +254,22 @@ void test_shouldApplyBraking(void)
 void test_dynamicBrakingApplied(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false); // CENTER = stop
-  mt = computeMotorTargets(js, MAX_SPEED, MAX_SPEED);
+  {
+    MotorTargets prevMt = { .targetLeft = MAX_SPEED, .targetRight = MAX_SPEED };
+    mt = computeMotorTargets(js, prevMt);
+  }
 
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Small Reverse expected (dynamic braking)");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Small Reverse expected (dynamic braking)");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetLeft, "Small Reverse expected (dynamic braking)");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetRight, "Small Reverse expected (dynamic braking)");
 
   // vice versa
 
-  mt = computeMotorTargets(js, -MAX_SPEED, -MAX_SPEED);
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Small Forward expected (dynamic braking)");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Small Forward expected (dynamic braking)");
+  {
+    MotorTargets prevMt = { .targetLeft = -MAX_SPEED, .targetRight = -MAX_SPEED };
+    mt = computeMotorTargets(js, prevMt);
+  }
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Small Forward expected (dynamic braking)");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Small Forward expected (dynamic braking)");
 }
 
 
@@ -296,9 +304,9 @@ void test_processJoystick_deadzone_behavior(void)
 void test_computeMotorTargets_still(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left motor target should be 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right motor target should be 0");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Left motor target should be 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Right motor target should be 0");
 }
 
 void test_computeMotorTargets_right_turn(void)
@@ -306,11 +314,11 @@ void test_computeMotorTargets_right_turn(void)
   static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
 
   js = processJoystick(JOYSTICK_CENTER + ((float)JOYSTICK_CENTER * JOYSTICK_DEADZONE_RATIO), JOYSTICK_CENTER, false); // Just above deadzone and min speed
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_TRUE_MESSAGE(js.steppedRatioLR > 0.0f, "Stepped ratio > 0");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left = clamped(MIN_MOTOR_SPEED - offset_half) for right turn (offset compensates for hardware)");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Left = clamped(MIN_MOTOR_SPEED - offset_half) for right turn (offset compensates for hardware)");
   // Accept zero or a small negative value (tolerance for rounding/clamping)
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right == 0 (tolerance for rounding/clamping)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Right == 0 (tolerance for rounding/clamping)");
 }
 
 void test_computeMotorTargets_left_turn(void)
@@ -318,78 +326,78 @@ void test_computeMotorTargets_left_turn(void)
   static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
 
   js = processJoystick(JOYSTICK_CENTER - ((float)JOYSTICK_CENTER * JOYSTICK_DEADZONE_RATIO), JOYSTICK_CENTER, false); // Just above deadzone and min speed
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   int offset_half = LR_OFFSET / 2;
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right = clamped(MIN_MOTOR_SPEED + offset_half) for left turn (offset compensates for hardware)");
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left == 0");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Right = clamped(MIN_MOTOR_SPEED + offset_half) for left turn (offset compensates for hardware)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Left == 0");
 }
 
 void test_computeMotorTargets_forward(void)
 {
 
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER + 100, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Left >= MIN");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Right >= MIN");
 }
 
 void test_computeMotorTargets_reverse(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER - 100, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left <= -MIN");
-  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right <= -MIN");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetLeft, "Left <= -MIN");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetRight, "Right <= -MIN");
 }
 
 void test_computeMotorTargets_sharp_right_turn(void)
 {
   js = processJoystick(JOYSTICK_CENTER + 500, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
-  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.right, "Right <= -MIN");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Left >= MIN");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetRight, "Right <= -MIN");
 }
 
 void test_computeMotorTargets_sharp_left_turn(void)
 {
   js = processJoystick(JOYSTICK_CENTER - 500, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.left, "Left < -MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right > MIN");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetLeft, "Left < -MIN");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Right > MIN");
 }
 
 void test_computeMotorTargets_Mixing(void)
 {
   // forward + slight right
   js = processJoystick(JOYSTICK_CENTER + 50, JOYSTICK_CENTER + 500, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.right, mt.left, "Left >= Right (right turn)");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Left >= MIN");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Right >= MIN");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(mt.targetRight, mt.targetLeft, "Left >= Right (right turn)");
 
   // forward + slight left
   js = processJoystick(JOYSTICK_CENTER - 50, JOYSTICK_CENTER + 500, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.left, "Left >= MIN");
-  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.right, "Right >= MIN");
-  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(mt.left, mt.right, "Left <= Right (left turn, allows equality if LR_OFFSET=0)");
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Left >= MIN");
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Right >= MIN");
+  TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(mt.targetLeft, mt.targetRight, "Left <= Right (left turn, allows equality if LR_OFFSET=0)");
 }
 
-void test_computeMotorTargets_skipSlew_leftRight(void)
+void test_computeMotorTargets_skipSlew_targetLeft(void)
 {
   // Test: Small X deflection (gentle turn) should NOT skip slew rate
   int gentle_deflection = JOYSTICK_DEADZONE + 10; // just above deadzone
   js = processJoystick(JOYSTICK_CENTER + gentle_deflection, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_FALSE_MESSAGE(mt.skipSlewRate, "Gentle right turn should not skip slew rate");
 
   // Test: High X deflection (aggressive turn) SHOULD skip slew rate
   int high_deflection = (int)(0.90f * (float)JOYSTICK_CENTER + 0.5f); // To get steppedRatioLR >= 0.90, need rawRatioLR >= 0.90
   js = processJoystick(JOYSTICK_CENTER + high_deflection, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_TRUE_MESSAGE(mt.skipSlewRate, "Aggressive right turn should skip slew rate");
 
   js = processJoystick(JOYSTICK_CENTER - high_deflection, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_TRUE_MESSAGE(mt.skipSlewRate, "Aggressive left turn should skip slew rate");
 }
 
@@ -398,19 +406,22 @@ void test_computeMotorTargets_skipSlew_forwardsBackwards(void)
   // Gentle forward (just above center)
   int gentle_forward = JOYSTICK_CENTER + JOYSTICK_DEADZONE + 10;
   js = processJoystick(JOYSTICK_CENTER, gentle_forward, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_FALSE_MESSAGE(mt.skipSlewRate, "Gentle forward should not skip slew rate");
 
   // Gentle backward (just below center)
   int gentle_backward = JOYSTICK_CENTER - JOYSTICK_DEADZONE - 10;
   js = processJoystick(JOYSTICK_CENTER, gentle_backward, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_FALSE_MESSAGE(mt.skipSlewRate, "Gentle backward should not skip slew rate");
 
   // Aggressive backward (large deflection)
   int aggressive_backward = JOYSTICK_CENTER - (int)(0.90f * JOYSTICK_CENTER + 0.5f); // matches skipSlew threshold
   js = processJoystick(JOYSTICK_CENTER, aggressive_backward, false);
-  mt = computeMotorTargets(js, 100, 100);
+  {
+    MotorTargets prevMt = { .targetLeft = 100, .targetRight = 100 };
+    mt = computeMotorTargets(js, prevMt);
+  }
   TEST_ASSERT_TRUE_MESSAGE(mt.skipSlewRate, "Aggressive backward should skip slew rate");
 }
 
@@ -418,51 +429,51 @@ void test_computeMotorTargets_deadzone(void)
 {
   // Both axes just inside deadzone
   js = processJoystick(JOYSTICK_CENTER + (JOYSTICK_DEADZONE / 2), JOYSTICK_CENTER + (JOYSTICK_DEADZONE / 2), false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_EQUAL(0, mt.left);
-  TEST_ASSERT_EQUAL(0, mt.right);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_EQUAL(0, mt.targetRight);
 }
 
 void test_computeMotorTargets_edge_of_deadzone(void)
 {
   // Just outside deadzone on X-
   js = processJoystick(JOYSTICK_CENTER - JOYSTICK_DEADZONE - 1, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_NOT_EQUAL(0, mt.right);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_NOT_EQUAL(0, mt.targetRight);
 
   // Just outside deadzone on X+
   js = processJoystick(JOYSTICK_CENTER + JOYSTICK_DEADZONE + 1, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_NOT_EQUAL(0, mt.left);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
 
   // Just outside deadzone on Y+
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER + JOYSTICK_DEADZONE + 1, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_NOT_EQUAL(0, mt.left);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
 
   // Just outside deadzone on Y-
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER - JOYSTICK_DEADZONE - 1, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_NOT_EQUAL(0, mt.left);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
 }
 
 void test_computeMotorTargets_max_diagonal(void)
 {
   js = processJoystick(MAX_ADC_VALUE, MAX_ADC_VALUE, false);
-  mt = computeMotorTargets(js, 0, 0);
-  TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.left);
-  TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.right);
-  TEST_ASSERT_GREATER_OR_EQUAL(mt.right, mt.left);
+  mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.targetLeft);
+  TEST_ASSERT_GREATER_OR_EQUAL(MIN_MOTOR_SPEED, mt.targetRight);
+  TEST_ASSERT_GREATER_OR_EQUAL(mt.targetRight, mt.targetLeft);
 }
 
 void test_processJoystick_NoMotion(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 0, 0);
+  mt = computeMotorTargets(js, mt);
   TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, JOYSTICK_CENTER, js.rawX);
   TEST_ASSERT_INT_WITHIN(JOYSTICK_DEADZONE, JOYSTICK_CENTER, js.rawY);
-  TEST_ASSERT_EQUAL(0, mt.left);
-  TEST_ASSERT_EQUAL(0, mt.right);
+  TEST_ASSERT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_EQUAL(0, mt.targetRight);
 }
 
 void test_processJoystick_Deadzone_NoMotion(void)
@@ -473,9 +484,9 @@ void test_processJoystick_Deadzone_NoMotion(void)
   for (int dx = -dz + 1; dx < dz; ++dx) {
     for (int dy = -dz + 1; dy < dz; ++dy) {
       js = processJoystick(center + dx, center + dy, false);
-      mt = computeMotorTargets(js, 0, 0);
-      TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left should be 0 in deadzone");
-      TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right should be 0 in deadzone");
+      mt = computeMotorTargets(js, mt);
+      TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Left should be 0 in deadzone");
+      TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Right should be 0 in deadzone");
     }
   }
 }
@@ -483,23 +494,23 @@ void test_processJoystick_Deadzone_NoMotion(void)
 void test_slewRateLimit_RampsDownToZero(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false);
-  mt = computeMotorTargets(js, 10, 10);
+  mt = computeMotorTargets(js, mt);
   for (int i = 0; i < 20; ++i)
-    mt = computeMotorTargets(js, mt.left, mt.right);
-  TEST_ASSERT_EQUAL(0, mt.left);
-  TEST_ASSERT_EQUAL(0, mt.right);
+    mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_EQUAL(0, mt.targetRight);
 }
 
 void test_SlewRateLimit_FullCycleAccelerateAndStop(void)
 {
   js = processJoystick(JOYSTICK_CENTER, MAX_ADC_VALUE, false);
   for (int i = 0; i < 20; ++i)
-    mt = computeMotorTargets(js, mt.left, mt.right);
+    mt = computeMotorTargets(js, mt);
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false);
   for (int i = 0; i < 20; ++i)
-    mt = computeMotorTargets(js, mt.left, mt.right);
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.left, "Left decelerates to stop");
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.right, "Right decelerates to stop");
+    mt = computeMotorTargets(js, mt);
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Left decelerates to stop");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Right decelerates to stop");
 }
 
 // ----------------------------- Tests: Config constants -----------------------
@@ -524,9 +535,9 @@ static int adc_to_percent(int adc_value)
 void test_joystick_center_position_mapping(void)
 {
   int throttleResult = calculateThrottlePercent(JOYSTICK_CENTER);
-  int leftRightResult = calculateLeftRightPercent(JOYSTICK_CENTER);
+  int targetLeftResult = calculateThrottlePercent(JOYSTICK_CENTER);
   TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, throttleResult, "Center Y -> ~0%");
-  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, leftRightResult, "Center X -> ~0%");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, targetLeftResult, "Center X -> ~0%");
 }
 
 void test_joystick_full_range_mapping(void)
@@ -538,76 +549,76 @@ void test_joystick_full_range_mapping(void)
   TEST_ASSERT_INT_WITHIN_MESSAGE(5, 76, throttleHigh, "Y=900 ADC -> ~76% throttle (forward)");
 
   // Test left/right percent mapping at low and high ADC values
-  int leftRightLow = calculateLeftRightPercent(100);
-  int leftRightHigh = calculateLeftRightPercent(900);
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-80, leftRightLow, "X=100 ADC -> ~-80% left/right");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(76, leftRightHigh, "X=900 ADC -> ~76% left/right");
+  int targetLeftLow = calculateThrottlePercent(100);
+  int targetLeftHigh = calculateThrottlePercent(900);
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-80, targetLeftLow, "X=100 ADC -> ~-80% left/right");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(76, targetLeftHigh, "X=900 ADC -> ~76% left/right");
 }
 
 void test_joystick_deadzone_functionality(void)
 {
   int throttleResult = calculateThrottlePercent(550);
-  int leftRightResult = calculateLeftRightPercent(550);
+  int targetLeftResult = calculateThrottlePercent(550);
   TEST_ASSERT_GREATER_THAN_MESSAGE(3, throttleResult, "> 3% (forward)");
-  TEST_ASSERT_GREATER_THAN_MESSAGE(3, leftRightResult, "> 3%");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(3, targetLeftResult, "> 3%");
 }
 
 void test_leftmost_position_no_deadzone_interference(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(0), "x=0 -> -100%");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateLeftRightPercent(MAX_ADC_VALUE), "x=MAX_ADC_VALUE -> 100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateThrottlePercent(0), "x=0 -> -100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateThrottlePercent(MAX_ADC_VALUE), "x=MAX_ADC_VALUE -> 100%");
   int throttleCenter = calculateThrottlePercent(JOYSTICK_CENTER);
   TEST_ASSERT_INT_WITHIN_MESSAGE(3, 0, throttleCenter, "Center Y ~ 0%");
 }
 
 void test_xMin_underflow_protection(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(-10), "clamp <-100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateThrottlePercent(-10), "clamp <-100%");
 }
 
 void test_xMax_overflow_protection(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(+100, calculateLeftRightPercent(1050), "clamp >+100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(+100, calculateThrottlePercent(1050), "clamp >+100%");
 }
 
 void test_leftmost_position_real_world(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(0), "x=0 -> -100%");
-  TEST_ASSERT_LESS_THAN_MESSAGE(-80, calculateLeftRightPercent(10), "x=10 strong -ve");
-  TEST_ASSERT_LESS_THAN_MESSAGE(-70, calculateLeftRightPercent(50), "x=50 strong -ve");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateThrottlePercent(0), "x=0 -> -100%");
+  TEST_ASSERT_LESS_THAN_MESSAGE(-80, calculateThrottlePercent(10), "x=10 strong -ve");
+  TEST_ASSERT_LESS_THAN_MESSAGE(-70, calculateThrottlePercent(50), "x=50 strong -ve");
 }
 
 void test_rightmost_position_real_world(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateLeftRightPercent(MAX_ADC_VALUE), "x=MAX_ADC_VALUE -> 100%");
-  TEST_ASSERT_GREATER_THAN_MESSAGE(90, calculateLeftRightPercent(1000), ">90%");
-  TEST_ASSERT_GREATER_THAN_MESSAGE(80, calculateLeftRightPercent(950), ">80%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateThrottlePercent(MAX_ADC_VALUE), "x=MAX_ADC_VALUE -> 100%");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(90, calculateThrottlePercent(1000), ">90%");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(80, calculateThrottlePercent(950), ">80%");
 }
 
 void test_smooth_progression_no_jumps(void)
 {
-  int center = calculateLeftRightPercent(JOYSTICK_CENTER);
-  int slightRight = calculateLeftRightPercent(550);
-  int moreRight = calculateLeftRightPercent(600);
+  int center = calculateThrottlePercent(JOYSTICK_CENTER);
+  int slightRight = calculateThrottlePercent(550);
+  int moreRight = calculateThrottlePercent(600);
   TEST_ASSERT_LESS_THAN_MESSAGE(20, abs(slightRight - center), "<20%");
   TEST_ASSERT_LESS_THAN_MESSAGE(25, abs(moreRight - slightRight), "<25%");
 
-  int slightLeft = calculateLeftRightPercent(474);
-  int moreLeft = calculateLeftRightPercent(424);
+  int slightLeft = calculateThrottlePercent(474);
+  int moreLeft = calculateThrottlePercent(424);
   TEST_ASSERT_LESS_THAN_MESSAGE(20, abs(slightLeft - center), "<20%");
   TEST_ASSERT_LESS_THAN_MESSAGE(25, abs(moreLeft - slightLeft), "<25%");
 }
 
 void test_narrow_range_learning_problem(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(0), "saturate -100%");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateLeftRightPercent(MAX_ADC_VALUE), "saturate 100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateThrottlePercent(0), "saturate -100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateThrottlePercent(MAX_ADC_VALUE), "saturate 100%");
 }
 
 void test_conservative_range_expansion(void)
 {
-  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateLeftRightPercent(0), "-100%");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateLeftRightPercent(MAX_ADC_VALUE), "100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(-100, calculateThrottlePercent(0), "-100%");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(100, calculateThrottlePercent(MAX_ADC_VALUE), "100%");
 }
 
 void test_joystick_processJoystick_integration(void)
@@ -655,14 +666,14 @@ void test_throttle_fillbar_from_center_downward(void)
 
 void test_left_right_fillbar_from_center_rightward(void)
 {
-  FillBarResult r = calculateLeftRightFillBar(25, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(25, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "L/R rightward width");
   TEST_ASSERT_EQUAL_INT_MESSAGE(DISPLAY_WIDTH / 2, r.fillStartX, "starts at center X");
 }
 
 void test_left_right_fillbar_from_center_leftward(void)
 {
-  FillBarResult r = calculateLeftRightFillBar(-25, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(-25, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "L/R leftward width");
   TEST_ASSERT_LESS_THAN_MESSAGE(DISPLAY_WIDTH / 2, r.fillStartX, "starts left of center X");
 }
@@ -676,7 +687,7 @@ void test_maximum_fillbar_constraints(void)
 
 void test_fillbar_bar_edge_cases(void)
 {
-  FillBarResult r = calculateLeftRightFillBar(-50, DISPLAY_WIDTH);
+  FillBarResult r = calculateThrottleFillBar(-50, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "max left has width");
   TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.fillStartX, "fills from far left");
 }
@@ -693,9 +704,9 @@ void test_fillBarLogic(void)
   TEST_ASSERT_EQUAL(3, thrPos.fillWidth);
 
   // Left/Right bar: -100..100 across width
-  FillBarResult lr0 = calculateLeftRightFillBar(0, 52);
-  FillBarResult lrLeft = calculateLeftRightFillBar(-100, 52);
-  FillBarResult lrRight = calculateLeftRightFillBar(100, 52);
+  FillBarResult lr0 = calculateThrottleFillBar(0, 52);
+  FillBarResult lrLeft = calculateThrottleFillBar(-100, 52);
+  FillBarResult lrRight = calculateThrottleFillBar(100, 52);
   TEST_ASSERT_EQUAL(0, lr0.fillWidth);
   TEST_ASSERT_EQUAL(26, lrLeft.fillWidth);
   TEST_ASSERT_EQUAL(26, lrRight.fillWidth);
@@ -734,7 +745,7 @@ int main(void)
   RUN_TEST(test_computeMotorTargets_sharp_right_turn);
   RUN_TEST(test_computeMotorTargets_sharp_left_turn);
   RUN_TEST(test_computeMotorTargets_Mixing);
-  RUN_TEST(test_computeMotorTargets_skipSlew_leftRight);
+  RUN_TEST(test_computeMotorTargets_skipSlew_targetLeft);
   RUN_TEST(test_computeMotorTargets_skipSlew_forwardsBackwards);
   RUN_TEST(test_computeMotorTargets_deadzone);
   RUN_TEST(test_computeMotorTargets_edge_of_deadzone);

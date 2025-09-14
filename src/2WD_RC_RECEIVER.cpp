@@ -39,22 +39,10 @@ struct JoystickData
   uint8_t checksum;   // 8-bit checksum (matches transmitter)
 };
 
-// Simplified response data for ACK payload - MATCHES what transmitter expects
-struct __attribute__((packed)) RxData
-{
-  uint8_t voltage;     // Battery voltage (0-255)
-  uint8_t successRate; // Rx success rate (0-255)
-  uint8_t status;      // Combined mode + state info
-  uint8_t crc;         // Simple CRC
-};
-
 // Global objects - dynamic allocation for memory efficiency
 RF24 *radio = nullptr;
 RxData rxData = {0, 0, 0, 0};
-
-// Control variables
-bool autoMode = false;
-int leftSpeed = 0, rightSpeed = 0;
+MotorTargets prevMotorValues = {0, 0, 0, 0, false, false};
 
 // RF Signal variables
 int joystickX = 512; // Center position (range: 0-1023)
@@ -181,13 +169,12 @@ void initRadio()
 
 void loop()
 {
-  uint8_t mode = autoMode ? 1 : 0; // 0 = manual, 1 = auto
-  uint8_t state = 0;               // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
-  if (leftSpeed > 0 && rightSpeed > 0)
+  uint8_t state = 0;           // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
+  if (prevMotorValues.targetLeft > 0 && prevMotorValues.targetRight > 0)
     state = 1;
-  else if (leftSpeed < 0 && rightSpeed < 0)
+  else if (prevMotorValues.targetLeft < 0 && prevMotorValues.targetRight < 0)
     state = 2;
-  else if (leftSpeed != rightSpeed)
+  else if (prevMotorValues.targetLeft != prevMotorValues.targetRight)
     state = 3;
 
   // Pack response data
@@ -195,6 +182,7 @@ void loop()
 
   updateVoltageReading(rxData);
 
+  uint8_t mode = 0; // 0 = normal/manual mode (update to add more modes)
   rxData.status = (mode << 2) | state; // Pack mode and state
   rxData.crc = calculateRxCRC(rxData);
   rxData.successRate = (uint8_t)(getSuccessRate() * 255); // Scale to 0-255
@@ -215,10 +203,12 @@ void loop()
     rfLostCounter = 0; // Reset RF lost counter
 
     JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
-    mt = computeMotorTargets(js, leftSpeed, rightSpeed);
-    leftSpeed = mt.left;
-    rightSpeed = mt.right;
+  mt = computeMotorTargets(js, prevMotorValues);
     setMotorSpeeds(mt.outputLeft, mt.outputRight);
+
+    // Update prevMotorValues for next cycle
+    prevMotorValues.targetLeft = mt.targetLeft;
+    prevMotorValues.targetRight = mt.targetRight;
 
     // Buzzer feedback
     beep(js.buzzerOn);
@@ -228,9 +218,11 @@ void loop()
   }
   else if (rfLostCounter++ * LOOP_DELAY_MS > 440)
   { // RF signal lost after ~0.5s
-    leftSpeed = 0;
-    rightSpeed = 0;
-    setMotorSpeeds(leftSpeed, rightSpeed);
+    setMotorSpeeds(0, 0);
+
+    // Update prevMotorValues to stopped
+    prevMotorValues.targetLeft = 0;
+    prevMotorValues.targetRight = 0;
 
     // Update packet history with failure
     updatePacketHistory(false);
@@ -470,12 +462,12 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
     isFirstReport = false;
   }
 
-  // Radio status
-  Serial.print("NRF Data:");
-  Serial.print(isRead ? " YES" : "  NO");
-  Serial.print(" | Success:");
-  Serial.print(pad3s((int)(rxData.successRate / 255.0 * 100.0)));
-  Serial.print("%");
+  // // Radio status
+  // Serial.print("NRF Data:");
+  // Serial.print(isRead ? " YES" : "  NO");
+  // Serial.print(" | Success:");
+  // Serial.print(pad3f((int)(rxData.successRate / 255.0 * 100.0)));
+  // Serial.print("%");
 
   // Current joystick values
   Serial.print(" | JS X:");
@@ -488,22 +480,29 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   // Motor speeds
   // use global lastOutputLeft, lastOutputRight
   Serial.print(" | Motors L:");
-  Serial.print(pad4s(mt.left));
+  Serial.print(pad4s(mt.targetLeft));
   Serial.print(" R:");
-  Serial.print(pad4s(mt.right));
+  Serial.print(pad4s(mt.targetRight));
+  Serial.print(" OutL:");
+  Serial.print(pad4s(mt.outputLeft));
+  Serial.print(" OutR:");
+  Serial.print(pad4s(mt.outputRight));
+  Serial.print(" |");
+  Serial.print(mt.skipSlewRate ? " NoSlew" : " Slew");
+  Serial.print(mt.brakingApplied ? " Braking" : "      ");
 
   // Direction indicator
   Serial.print(" Dir:");
   String direction;
-  if (mt.left == 0 && mt.right == 0)
+  if (mt.targetLeft == 0 && mt.targetRight == 0)
     direction = "STOP";
-  else if (mt.left > 0 && mt.right > 0)
+  else if (mt.targetLeft > 0 && mt.targetRight > 0)
     direction = "FWD";
-  else if (mt.left < 0 && mt.right < 0)
+  else if (mt.targetLeft < 0 && mt.targetRight < 0)
     direction = "REV";
-  else if (mt.left > mt.right)
+  else if (mt.targetLeft > mt.targetRight)
     direction = "RIGHT";
-  else if (mt.right > mt.left)
+  else if (mt.targetRight > mt.targetLeft)
     direction = "LEFT";
   else
     direction = "MIX";
@@ -512,21 +511,21 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 
   // L/R Ratio
   Serial.print(" Ratio:");
-  if (abs(mt.left) == 0 && abs(mt.right) == 0)
+  if (abs(mt.targetLeft) == 0 && abs(mt.targetRight) == 0)
   {
     Serial.print(padString("--", 6));
   }
-  else if (mt.right == 0)
+  else if (mt.targetRight == 0)
   {
     Serial.print(padString("L-only", 6));
   }
-  else if (mt.left == 0)
+  else if (mt.targetLeft == 0)
   {
     Serial.print(padString("R-only", 6));
   }
   else
   {
-    float ratio = (float)mt.left / mt.right;
+    float ratio = (float)mt.targetLeft / mt.targetRight;
     Serial.print(padString(String(ratio), 6));
   }
 
@@ -539,22 +538,22 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   Serial.print(pad5f(map(rxData.voltage, 0, 255, 0, MAX_ADC_VALUE)));
   Serial.print(")");
 
-  // Memory
-  extern int __heap_start, *__brkval;
-  int v;
-  int freeMemory = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-  Serial.print(" | Mem:");
-  Serial.print(pad4s(freeMemory));
+  // // Memory
+  // extern int __heap_start, *__brkval;
+  // int v;
+  // int freeMemory = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
+  // Serial.print(" | Mem:");
+  // Serial.print(pad4s(freeMemory));
 
-  // System uptime
-  unsigned long uptimeMs = millis();
-  unsigned long uptimeSec = uptimeMs / 1000;
-  unsigned long uptimeMin = uptimeSec / 60;
-  Serial.print(" | Up:");
-  Serial.print(pad2s(uptimeMin));
-  Serial.print("m");
-  Serial.print(pad2s(uptimeSec % 60));
-  Serial.print("s");
+  // // System uptime
+  // unsigned long uptimeMs = millis();
+  // unsigned long uptimeSec = uptimeMs / 1000;
+  // unsigned long uptimeMin = uptimeSec / 60;
+  // Serial.print(" | Up:");
+  // Serial.print(pad2s(uptimeMin));
+  // Serial.print("m");
+  // Serial.print(pad2s(uptimeSec % 60));
+  // Serial.print("s");
 
   Serial.println("");
 }
