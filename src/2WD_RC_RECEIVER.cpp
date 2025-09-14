@@ -475,25 +475,25 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 
   // Current joystick values
   Serial.print(" | JS X:");
-  Serial.print(pad3s(joystickX));
+  Serial.print(pad4s(joystickX));
   Serial.print(" Y:");
-  Serial.print(pad3s(joystickY));
+  Serial.print(pad4s(joystickY));
   Serial.print(" Btn:");
   Serial.print(joystickButton ? " ON" : "OFF");
 
   // Motor speeds
   // use global lastOutputLeft, lastOutputRight
   Serial.print(" | Motors L:");
-  Serial.print(pad4s(mt.targetLeft));
+  Serial.print(pad3s(mt.targetLeft));
   Serial.print(" R:");
-  Serial.print(pad4s(mt.targetRight));
+  Serial.print(pad3s(mt.targetRight));
   Serial.print(" OutL:");
-  Serial.print(pad4s(mt.outputLeft));
+  Serial.print(pad3s(mt.outputLeft));
   Serial.print(" OutR:");
-  Serial.print(pad4s(mt.outputRight));
+  Serial.print(pad3s(mt.outputRight));
   Serial.print(" |");
-  Serial.print(mt.skipSlewRate ? " NoSlew" : " Slew");
-  Serial.print(mt.brakingApplied ? " Braking" : "      ");
+  Serial.print(mt.skipSlewRate ? "     " : " Slew");
+  Serial.print(mt.brakingApplied ? " Braking" : "        ");
 
   // Direction indicator
   Serial.print(" Dir:");

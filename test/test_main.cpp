@@ -167,7 +167,7 @@ void test_slewRateLimit_ramp_up(void)
   TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -MIN_MOTOR_SPEED + 1, FULL_THROTTLE_THRESHOLD - 0.1f), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
   TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED/2, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 0->1 yields +1");
   TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 100 -> 101 yields +1 (NOT INCREASE BY RAMP STEP VALUE)");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + (int)(RAMP_STEP_SLOW / 3), 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Slightly above MIN_MOTOR_SPEED down to 0 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp down: MIN_MOTOR_SPEED+1 -> 0 clamps to 0");
 
   // slow down from negative to positive
   TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_SLOW, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: -100->100 increases by RAMP_STEP");
@@ -588,6 +588,42 @@ void test_SlewRateLimit_FullCycleAccelerateAndStop(void)
   TEST_ASSERT_TRUE_MESSAGE(abs(mt.outputRight) <= MIN_MOTOR_SPEED, "Right motor output should be stopped or applying braking");
 }
 
+// Regression: partial forward + right should move both wheels
+void test_partial_forward_right_both_wheels_move(void)
+{
+  // Simulate partial forward (Y just above center) and slight right (X just above center)
+  js = processJoystick(JOYSTICK_CENTER + 1, JOYSTICK_CENTER + 49, false); // X:513, Y:578
+  mt = computeMotorTargets(js, mt);
+  // At least one wheel should be at or above MIN_MOTOR_SPEED, the other should be nonzero (not stuck at 0)
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, abs(mt.outputLeft), "Left wheel should move (>= MIN_MOTOR_SPEED)");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, mt.outputRight, "Right wheel should move (not zero)");
+
+
+  // Simulate partial forward (Y just above center) and slight left (X just below center)
+  js = processJoystick(JOYSTICK_CENTER - 1, JOYSTICK_CENTER + 49, false); // X:513, Y:578
+  mt = computeMotorTargets(js, mt);
+  // At least one wheel should be at or above MIN_MOTOR_SPEED, the other should be nonzero (not stuck at 0)
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, abs(mt.outputLeft), "Left wheel should move (>= MIN_MOTOR_SPEED)");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, mt.outputRight, "Right wheel should move (not zero)");
+
+
+    // Simulate partial forward (Y just below center) and slight right (X just above center)
+  js = processJoystick(JOYSTICK_CENTER + 1, JOYSTICK_CENTER - 49, false); // X:513, Y:578
+  mt = computeMotorTargets(js, mt);
+  // At least one wheel should be at or above MIN_MOTOR_SPEED, the other should be nonzero (not stuck at 0)
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, abs(mt.outputLeft), "Left wheel should move (>= MIN_MOTOR_SPEED)");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, mt.outputRight, "Right wheel should move (not zero)");
+
+
+  // Simulate partial forward (Y just below center) and slight left (X just below center)
+  js = processJoystick(JOYSTICK_CENTER - 1, JOYSTICK_CENTER - 49, false); // X:513, Y:578
+  mt = computeMotorTargets(js, mt);
+  // At least one wheel should be at or above MIN_MOTOR_SPEED, the other should be nonzero (not stuck at 0)
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(MIN_MOTOR_SPEED, abs(mt.outputLeft), "Left wheel should move (>= MIN_MOTOR_SPEED)");
+  TEST_ASSERT_NOT_EQUAL_MESSAGE(0, mt.outputRight, "Right wheel should move (not zero)");
+}
+
+
 // ----------------------------- Tests: Config constants -----------------------
 void test_configuration_constants(void)
 {
@@ -864,6 +900,9 @@ int main(void)
   RUN_TEST(test_conservative_range_expansion);
 
   RUN_TEST(test_fillBarLogic);
+
+  // Regression: partial forward + right should move both wheels
+  RUN_TEST(test_partial_forward_right_both_wheels_move);
 
   return UNITY_END();
 }

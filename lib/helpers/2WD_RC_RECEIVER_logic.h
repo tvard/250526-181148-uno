@@ -2,7 +2,7 @@
 // Motor/receiver-specific constants
 const int LR_OFFSET         = 0;  // Left/Right balance offset, +ve = more right speed, -ve = more left speed
 const int MAX_SPEED        = 255;
-const int MIN_MOTOR_SPEED  = 55;    // minimum speed to avoid stalling, can be adjusted
+const int MIN_MOTOR_SPEED  = 60;    // minimum speed to avoid stalling, can be adjusted
 const int MOTOR_DEADZONE   = 10;    // motor values within this range of zero are considered stopped
 
 // Receiver-specific drive/motor logic constants

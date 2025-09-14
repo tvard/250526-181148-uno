@@ -154,6 +154,9 @@ int slewRateLimit(int current, int target, float deflection)
 /// The mixing formula is standard for differential drive (tank drive)
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const MotorTargets &prevMt)
 {
+    // DEBUG: Print all relevant values for test diagnosis
+    // printf("[computeMotorTargets] rawX=%d rawY=%d | centeredX=%d centeredY=%d\n", js.rawX, js.rawY, js.rawX - JOYSTICK_CENTER, js.rawY - JOYSTICK_CENTER);
+
     MotorTargets mt = {};
     int nextLeft = prevMt.outputLeft;
     int nextRight = prevMt.outputRight;
@@ -191,13 +194,16 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
             mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         }
+
+        // printf("[computeMotorTargets - withinDeadzone] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+
         return mt;
     }
 
     static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
 
     // In-place turn - when Y stick is near center (512) AND significant X deflection
-    if (abs(js.rawY - JOYSTICK_CENTER) < (0.20f * MAX_ADC_VALUE) && fabs(js.steppedRatioLR) >= JOYSTICK_DEADZONE_RATIO)
+    if (abs(js.rawY - JOYSTICK_CENTER) < (0.02f * MAX_ADC_VALUE) && fabs(js.steppedRatioLR) >= JOYSTICK_DEADZONE_RATIO)
     {
         int base_sp = MIN_MOTOR_SPEED + 1;
         float offset_half = LR_OFFSET / 2.0f;
@@ -231,6 +237,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
         mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+
+        // printf("[computeMotorTargets - inPlaceTurn] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+
         return mt;
     }
 
@@ -259,6 +268,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
         mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+
+        // printf("[computeMotorTargets - forwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+
         return mt;
     }
     else if (js.rawY < BACKWARD_THRESHOLD)
@@ -283,6 +295,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
         mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+
+        // printf("[computeMotorTargets - backwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+
         return mt; // ignore turn tank mixing at low x-deflection
     }
 
@@ -306,6 +321,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.targetRight -= offset_half;
     }
 
+    // printf("[DEBUG pre-clamp] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+
     const unsigned long SLEW_UPDATE_INTERVAL = 20; // ms
     static unsigned long lastSlewUpdate = 0;
 
@@ -326,8 +343,20 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     }
 
     mt.brakingApplied = false;
-    mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
-    mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+    // If either wheel is above MIN_MOTOR_SPEED, force both to at least MIN_MOTOR_SPEED (with correct sign)
+    // Clamp each wheel independently: only move if above threshold
+    if (abs(nextLeft) >= MIN_MOTOR_SPEED)
+        mt.outputLeft = nextLeft;
+    else
+        mt.outputLeft = 0;
+
+    if (abs(nextRight) >= MIN_MOTOR_SPEED)
+        mt.outputRight = nextRight;
+    else
+        mt.outputRight = 0;
+
+    // printf("[computeMotorTargets] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
+    
     return mt;
 }
 
