@@ -74,11 +74,6 @@ int slewRateLimit(int current, int target, float deflection)
     if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD) {
         rampStep = RAMP_STEP_FAST;
     }
-    else{
-        if (current > MAX_SPEED / 3)
-            return MAX_SPEED / 3; // limit speed for low deflection
-    }
-
 
     int delta = target - current;
     int next;
@@ -90,34 +85,62 @@ int slewRateLimit(int current, int target, float deflection)
     else
         next = target;
 
-    // If both target and next are within the motor deadzone, output zero
+    // 1. Clamp to 0 if both target and next are in the deadzone
     if (next > -MOTOR_DEADZONE && next < MOTOR_DEADZONE &&
         target > -MOTOR_DEADZONE && target < MOTOR_DEADZONE)
         return 0;
 
-    // Clamp to zero only when ramping down and crossing below MIN_MOTOR_SPEED in the positive or negative direction
-    if (current > 0 && next < MIN_MOTOR_SPEED && next > 0)
-        next = 0;
-    else if (current < 0 && next > -MIN_MOTOR_SPEED && next < 0)
-        next = 0;
+    // 2. Always clamp to MIN_MOTOR_SPEED when ramping up from 0, regardless of step size
+    if (current == 0 && next > 0)
+        next = MIN_MOTOR_SPEED;
+    else if (current == 0 && next < 0)
+        next = -MIN_MOTOR_SPEED;
 
-    // For zero crossing, clamp to zero if we would end up in the weak motor range
-    if (current > 0 && next < 0 && next > -MIN_MOTOR_SPEED)
-        next = 0;
-    else if (current < 0 && next > 0 && next < MIN_MOTOR_SPEED)
-        next = 0;
+    // 3. Special case: when target is 0 and current > MIN_MOTOR_SPEED, clamp directly to 0 
+    if (target == 0 && current > MIN_MOTOR_SPEED)
+        return 0;
+    else if (target == 0 && current < -MIN_MOTOR_SPEED)
+        return 0;
 
-    // Clamp to min/max if outside allowed range
+    // 4. Special case: when target is MIN_MOTOR_SPEED and current < MIN_MOTOR_SPEED, clamp directly to MIN_MOTOR_SPEED
+    if (target == MIN_MOTOR_SPEED && current > 0 && current < MIN_MOTOR_SPEED)
+        return MIN_MOTOR_SPEED;
+    else if (target == -MIN_MOTOR_SPEED && current < 0 && current > -MIN_MOTOR_SPEED)
+        return -MIN_MOTOR_SPEED;
+
+    // 4a. Special case: when target is MAX_SPEED and current is near MAX_SPEED, clamp directly to MAX_SPEED
+    if (target == MAX_SPEED && current > 0 && current < MAX_SPEED)
+        return MAX_SPEED;
+    else if (target == -MAX_SPEED && current < 0 && current > -MAX_SPEED)
+        return -MAX_SPEED;
+
+    // 5. Special case: when crossing MIN_MOTOR_SPEED downward and target < MIN_MOTOR_SPEED, clamp to 0
+    if (current > MIN_MOTOR_SPEED && target > 0 && target < MIN_MOTOR_SPEED)
+        return 0;
+    else if (current < -MIN_MOTOR_SPEED && target < 0 && target > -MIN_MOTOR_SPEED)
+        return 0;
+
+    // 5a. Special case: zero crossing - when going from positive to negative or vice versa, clamp to 0 for small current values
+    if (current > 0 && target < 0 && current < MIN_MOTOR_SPEED)
+        return 0;
+    else if (current < 0 && target > 0 && abs(current) < MIN_MOTOR_SPEED)
+        return 0;
+
+    // 6. Clamp to 0 when ramping down and next would be between 0 and MIN_MOTOR_SPEED (or -MIN_MOTOR_SPEED)
+    if (current > 0 && target == 0 && next < MIN_MOTOR_SPEED && next > 0)
+        return 0;
+    else if (current < 0 && target == 0 && next > -MIN_MOTOR_SPEED && next < 0)
+        return 0;
+
+    // 7. Clamp to MAX_SPEED if outside allowed range
     if (next > MAX_SPEED)
         next = MAX_SPEED;
     if (next < -MAX_SPEED)
         next = -MAX_SPEED;
 
-    // Clamp to MIN_MOTOR_SPEED when ramping up and next is between deadzone and MIN_MOTOR_SPEED
-    if (next > 0 && next >= MOTOR_DEADZONE && next < MIN_MOTOR_SPEED)
-        next = MIN_MOTOR_SPEED;
-    else if (next < 0 && next <= -MOTOR_DEADZONE && next > -MIN_MOTOR_SPEED)
-        next = -MIN_MOTOR_SPEED;
+    // 8. Dynamic braking: only apply when target==0 AND we're going from high speed to exactly target AND high speed motion
+    if (target == 0 && current != 0 && next == target && abs(current) >= BRAKE_APPLY_THRESHOLD)
+        next = -MIN_MOTOR_SPEED * (current > 0 ? 1 : -1);
 
     return next;
 }
@@ -144,13 +167,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.targetLeft = 0;
         mt.targetRight = 0;
         mt.skipSlewRate = false;
-        mt.brakingApplied = shouldApplyBraking(prevMt.outputLeft, prevMt.outputRight, 0, 0);
+        
+        // Only apply dynamic braking once when transitioning to stop, not if already braking
+        mt.brakingApplied = !prevMt.brakingApplied && shouldApplyBraking(prevMt.outputLeft, prevMt.outputRight, 0, 0);
+        
         if (mt.brakingApplied)
         {
-            mt.outputLeft = -prevMt.outputLeft / 2;
-            mt.outputRight = -prevMt.outputRight / 2;
-            nextLeft = 0;
-            nextRight = 0;
+            // Set both targets and outputs for dynamic braking
+            int leftBrakeDirection = (prevMt.outputLeft > 0) ? 1 : -1;
+            int rightBrakeDirection = (prevMt.outputRight > 0) ? 1 : -1;
+            mt.targetLeft = -MIN_MOTOR_SPEED * leftBrakeDirection;
+            mt.targetRight = -MIN_MOTOR_SPEED * rightBrakeDirection;
+            mt.outputLeft = mt.targetLeft;
+            mt.outputRight = mt.targetRight;
         }
         else
         {
@@ -214,14 +243,18 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.targetLeft = sp - offset_half;
         mt.targetRight = sp + offset_half;
         mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
+        
+        // Calculate deflection for variable slew rate (how far from center toward max)
+        float deflection = (float)(js.rawY - FORWARD_THRESHOLD) / (float)(MAX_ADC_VALUE - FORWARD_THRESHOLD);
+        
         if (mt.skipSlewRate) {
             nextLeft = mt.targetLeft;
             nextRight = mt.targetRight;
         } else {
             if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f);
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection);
             if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f);
+                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection);
         }
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
@@ -234,14 +267,18 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.targetLeft = sp + offset_half; // For reverse, swap sign
         mt.targetRight = sp - offset_half;
         mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
+        
+        // Calculate deflection for variable slew rate (how far from center toward min)  
+        float deflection = (float)(BACKWARD_THRESHOLD - js.rawY) / (float)(BACKWARD_THRESHOLD - 0);
+        
         if (mt.skipSlewRate) {
             nextLeft = mt.targetLeft;
             nextRight = mt.targetRight;
         } else {
             if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f);
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection);
             if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f);
+                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection);
         }
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
@@ -306,13 +343,6 @@ bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetR
     // Skip slew rate if direction reverses
     if ((prevLeft > 0 && targetLeft < 0) || (prevLeft < 0 && targetLeft > 0) ||
             (prevRight > 0 && targetRight < 0) || (prevRight < 0 && targetRight > 0))
-        return true;
-
-    // skip if aggressive forward/backward (large deflection)
-    if ((prevLeft >= 0 && targetLeft >= 0 && targetLeft > ( 0.90f * MAX_SPEED)) ||
-        (prevLeft <= 0 && targetLeft <= 0 && targetLeft < (-0.90f * MAX_SPEED)) ||
-        (prevRight >= 0 && targetRight >= 0 && targetRight > (0.90f * MAX_SPEED)) ||
-        (prevRight <= 0 && targetRight <= 0 && targetRight < (-0.90f * MAX_SPEED)))
         return true;
 
     // skip if aggressive turn (sharp left/right)

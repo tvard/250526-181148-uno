@@ -209,6 +209,10 @@ void loop()
     // Update prevMotorValues for next cycle
     prevMotorValues.targetLeft = mt.targetLeft;
     prevMotorValues.targetRight = mt.targetRight;
+    prevMotorValues.outputLeft = mt.outputLeft;
+    prevMotorValues.outputRight = mt.outputRight;
+    prevMotorValues.skipSlewRate = mt.skipSlewRate;
+    prevMotorValues.brakingApplied = mt.brakingApplied;
 
     // Buzzer feedback
     beep(js.buzzerOn);

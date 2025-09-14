@@ -8,7 +8,6 @@ const int MOTOR_DEADZONE   = 10;    // motor values within this range of zero ar
 // Receiver-specific drive/motor logic constants
 const int RAMP_STEP_SLOW = 03;      // slow slew rate step (for gentle joystick deflection)
 const int RAMP_STEP_FAST = 60;      // fast slew rate step (for aggressive joystick deflection)
-const int RAMP_STEP = RAMP_STEP_SLOW; // default for compatibility
 
 #pragma once
 
@@ -28,5 +27,4 @@ const int FORWARD_THRESHOLD = JOYSTICK_CENTER + JOYSTICK_DEADZONE;  // threshold
 const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // threshold to start backward movement
 const float FULL_TURN_THRESHOLD = 0.80f;                 // threshold (as a percentage of max X deflection) for full in-place turn
 const float FULL_THROTTLE_THRESHOLD = 0.80f;             // threshold (as a percentage of max Y deflection) for full forward/backward speed
-const float SLOW_SLEW_THRESHOLD = 0.50f;                 // below this, slew rate is slow
 const float BRAKE_APPLY_THRESHOLD = 0.20f * MAX_SPEED;   // Minimum speed to apply braking when stopping

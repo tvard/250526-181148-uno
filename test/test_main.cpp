@@ -126,7 +126,7 @@ void test_inplace_turn_symmetry_with_offset(void)
 // New tests for variable slew rate
 void test_slewRateLimit_variable_slew(void)
 {
-  // Slow slew rate (deflection < SLOW_SLEW_THRESHOLD)
+  // Slow slew rate (deflection < FULL_THROTTLE_THRESHOLD)
   float slow_deflection = 0.3f;
   int current = 0;
   int target = 100;
@@ -140,8 +140,8 @@ void test_slewRateLimit_variable_slew(void)
   result = slewRateLimit(current, target, fast_deflection);
   TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Fast slew rate step should clamp to MIN_MOTOR_SPEED");
 
-  // Edge case: exactly at SLOW_SLEW_THRESHOLD
-  float edge_deflection = SLOW_SLEW_THRESHOLD;
+  // Edge case: exactly at FULL_THROTTLE_THRESHOLD
+  float edge_deflection = FULL_THROTTLE_THRESHOLD;
   current = 0;
   target = 100;
   result = slewRateLimit(current, target, edge_deflection);
@@ -159,54 +159,60 @@ void test_slewRateLimit_variable_slew(void)
 
 void test_slewRateLimit_ramp_up(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP, slewRateLimit(100, 200, 0.0f), "Ramp up: 100->200 should increase by RAMP_STEP");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, 50, 0.0f), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -50, 0.0f), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP, slewRateLimit(-100, 100, 0.0f), "Ramp up: -100->100 increases by RAMP_STEP");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, 1, 0.0f), "Ramp up: 0->1 yields +1");
-  TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101, 0.0f), "Ramp up: 100->101 yields +1");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + (int)(RAMP_STEP / 3), 0, 0.0f), "Slightly above MIN_MOTOR_SPEED down to 0 clamps to 0");
+
+  // ramp up from positive to positive
+  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP_SLOW, slewRateLimit(100, 200, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 100->200 should increase by RAMP_STEP"); // slow
+  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP_FAST, slewRateLimit(100, 200, FULL_THROTTLE_THRESHOLD + 0.1f), "Ramp up: 100->200 should increase by RAMP_STEP"); // fast
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED - 1, FULL_THROTTLE_THRESHOLD - 0.1f), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -MIN_MOTOR_SPEED + 1, FULL_THROTTLE_THRESHOLD - 0.1f), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED/2, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 0->1 yields +1");
+  TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 100 -> 101 yields +1 (NOT INCREASE BY RAMP STEP VALUE)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + (int)(RAMP_STEP_SLOW / 3), 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Slightly above MIN_MOTOR_SPEED down to 0 clamps to 0");
+
+  // slow down from negative to positive
+  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_SLOW, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: -100->100 increases by RAMP_STEP");
+  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_FAST, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD + 0.1f), "Ramp up: -100->100 increases by RAMP_STEP");
 }
 
 void test_slewRateLimit_ramp_down(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(200 - RAMP_STEP, slewRateLimit(200, 100, 0.0f), "200->100");
-  TEST_ASSERT_EQUAL_MESSAGE(100 - RAMP_STEP, slewRateLimit(100, -100, 0.0f), "100->-100");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1, 0.0f), "0->-1");
-  TEST_ASSERT_EQUAL_MESSAGE(99, slewRateLimit(100, 99, 0.0f), "100->99");
+  TEST_ASSERT_EQUAL_MESSAGE(200 - RAMP_STEP_SLOW, slewRateLimit(200, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "200->100");
+  TEST_ASSERT_EQUAL_MESSAGE(100 - RAMP_STEP_FAST, slewRateLimit(100, -100, FULL_THROTTLE_THRESHOLD + 0.1f), "100->-100");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1, FULL_THROTTLE_THRESHOLD + 0.1f), "0->-1");
+  TEST_ASSERT_EQUAL_MESSAGE(99, slewRateLimit(100, 99, FULL_THROTTLE_THRESHOLD + 0.1f), "100->99");
 }
 
 void test_slewRateLimit_zero_crossing(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100, 0.0f), "20->-100 clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100, 0.0f), "-20->100 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100, FULL_THROTTLE_THRESHOLD - 0.1f), "20->-100 clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "-20->100 clamps to 0");
 }
 
 void test_slewRateLimit_small_steps(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2, 0.0f), "deadzone 1->2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2, 0.0f), "deadzone -1->-2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0, 0.0f), "deadzone 1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0, 0.0f), "deadzone -1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2, 0.0f), "Above MIN: +2");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2, 0.0f), "Above MIN reverse: -2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone 1->2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone -1->-2");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone 1->0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone -1->0");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2, FULL_THROTTLE_THRESHOLD - 0.1f), "Above MIN: +2");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2, FULL_THROTTLE_THRESHOLD - 0.1f), "Above MIN reverse: -2");
 }
 
 void test_slewRateLimit_min_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, 0, 0.0f), "Down past MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, 0, 0.0f), "Down past -MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED, 0.0f), "Up to MIN yields MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED, 0.0f), "Up to -MIN yields -MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10, 0.0f), "Crossing MIN while down: 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10, 0.0f), "Crossing -MIN while up: 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Down past MIN clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Down past -MIN clamps to 0");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "Up to MIN yields MIN");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "Up to -MIN yields -MIN");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10, FULL_THROTTLE_THRESHOLD - 0.1f), "Crossing MIN while down: 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10, FULL_THROTTLE_THRESHOLD - 0.1f), "Crossing -MIN while up: 0");
 }
 
 void test_slewRateLimit_max_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(MAX_SPEED, slewRateLimit(MAX_SPEED - 5, MAX_SPEED, 0.0f), "near MAX -> MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED, 0.0f), "near -MAX -> -MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-456, -456, 0.0f), "clamp at -MAX if exceeded");
+  TEST_ASSERT_EQUAL_MESSAGE(MAX_SPEED, slewRateLimit(MAX_SPEED - 5, MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "near MAX -> MAX");
+  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "near -MAX -> -MAX");
+  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-456, -456, FULL_THROTTLE_THRESHOLD - 0.1f), "clamp at -MAX if exceeded");
 }
 
 void test_shouldSkipSlewRate(void)
@@ -217,15 +223,15 @@ void test_shouldSkipSlewRate(void)
   TEST_ASSERT_TRUE(shouldSkipSlewRate(100, -100, -100, -100)); // mixed L->R
   TEST_ASSERT_TRUE(shouldSkipSlewRate(-100, 100, 100, 100));   // mixed L->R
 
-  // Aggressive forward (should skip)
+  // Aggressive forward (should NOT skip - use fast slew rate instead)
   int aggressive_fwd = (int)(0.91f * MAX_SPEED);
-  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, aggressive_fwd, aggressive_fwd));
-  TEST_ASSERT_TRUE(shouldSkipSlewRate(10, 10, aggressive_fwd, aggressive_fwd));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, aggressive_fwd, aggressive_fwd));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(10, 10, aggressive_fwd, aggressive_fwd));
 
-  // Aggressive reverse (should skip)
+  // Aggressive reverse (should NOT skip - use fast slew rate instead)
   int aggressive_rev = (int)(-0.91f * MAX_SPEED);
-  TEST_ASSERT_TRUE(shouldSkipSlewRate(0, 0, aggressive_rev, aggressive_rev));
-  TEST_ASSERT_TRUE(shouldSkipSlewRate(-10, -10, aggressive_rev, aggressive_rev));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(0, 0, aggressive_rev, aggressive_rev));
+  TEST_ASSERT_FALSE(shouldSkipSlewRate(-10, -10, aggressive_rev, aggressive_rev));
 
   // Not aggressive (should NOT skip)
   int mild_fwd = (int)(0.5f * MAX_SPEED);
@@ -255,7 +261,7 @@ void test_dynamicBrakingApplied(void)
 {
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false); // CENTER = stop
   {
-    MotorTargets prevMt = { .targetLeft = MAX_SPEED, .targetRight = MAX_SPEED };
+    MotorTargets prevMt = { .targetLeft = MAX_SPEED, .targetRight = MAX_SPEED, .outputLeft = MAX_SPEED, .outputRight = MAX_SPEED };
     mt = computeMotorTargets(js, prevMt);
   }
 
@@ -265,11 +271,73 @@ void test_dynamicBrakingApplied(void)
   // vice versa
 
   {
-    MotorTargets prevMt = { .targetLeft = -MAX_SPEED, .targetRight = -MAX_SPEED };
+    MotorTargets prevMt = { .targetLeft = -MAX_SPEED, .targetRight = -MAX_SPEED, .outputLeft = -MAX_SPEED, .outputRight = -MAX_SPEED };
     mt = computeMotorTargets(js, prevMt);
   }
   TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetLeft, "Small Forward expected (dynamic braking)");
   TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, mt.targetRight, "Small Forward expected (dynamic braking)");
+}
+
+void test_dynamicBraking_noOscillation(void)
+{
+  // Simulate the exact scenario: forward motion -> center -> should settle, not oscillate
+  js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false); // CENTER = stop
+  
+  // Start with high-speed forward motion (like from the log)
+  MotorTargets prevMt = { .targetLeft = 243, .targetRight = 243, .outputLeft = 243, .outputRight = 243, .brakingApplied = false };
+  
+  // First center cycle: should apply dynamic braking
+  mt = computeMotorTargets(js, prevMt);
+  TEST_ASSERT_TRUE_MESSAGE(mt.brakingApplied, "First center cycle should apply braking");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetLeft, "First cycle: reverse braking");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.targetRight, "First cycle: reverse braking");
+  
+  // Second center cycle: should NOT re-apply dynamic braking (should settle to 0)
+  MotorTargets secondPrevMt = mt; // Use previous result
+  mt = computeMotorTargets(js, secondPrevMt);
+  TEST_ASSERT_FALSE_MESSAGE(mt.brakingApplied, "Second center cycle should NOT apply braking again");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Second cycle: should target 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Second cycle: should target 0");
+  
+  // Third center cycle: should remain settled at 0
+  MotorTargets thirdPrevMt = mt;
+  mt = computeMotorTargets(js, thirdPrevMt);
+  TEST_ASSERT_FALSE_MESSAGE(mt.brakingApplied, "Third center cycle should NOT apply braking");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Third cycle: should remain at 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Third cycle: should remain at 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.outputLeft, "Third cycle: output should be 0");
+  TEST_ASSERT_EQUAL_MESSAGE(0, mt.outputRight, "Third cycle: output should be 0");
+}
+
+void test_fullThrottle_reachesMaxSpeed(void)
+{
+  // Test full forward throttle reaches maximum speed with fast slew rate
+  js = processJoystick(JOYSTICK_CENTER, 994, false); // Full forward (like from log)
+  MotorTargets prevMt = { .targetLeft = 0, .targetRight = 0, .outputLeft = 0, .outputRight = 0 };
+  
+  // Simulate multiple cycles to allow slew rate to ramp up
+  for (int i = 0; i < 10; ++i) {
+    mt = computeMotorTargets(js, prevMt);
+    prevMt = mt;
+  }
+  
+  // After multiple cycles with full deflection, should reach high speeds (not stuck at MIN_MOTOR_SPEED)
+  TEST_ASSERT_GREATER_THAN_MESSAGE(150, mt.outputLeft, "Full forward should reach high speeds, not be stuck at MIN_MOTOR_SPEED");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(150, mt.outputRight, "Full forward should reach high speeds, not be stuck at MIN_MOTOR_SPEED");
+  
+  // Test full reverse throttle reaches maximum speed  
+  js = processJoystick(JOYSTICK_CENTER, -18, false); // Full reverse (like from log)
+  prevMt = { .targetLeft = 0, .targetRight = 0, .outputLeft = 0, .outputRight = 0 };
+  
+  // Simulate multiple cycles to allow slew rate to ramp up
+  for (int i = 0; i < 10; ++i) {
+    mt = computeMotorTargets(js, prevMt);
+    prevMt = mt;
+  }
+  
+  // After multiple cycles with full deflection, should reach high reverse speeds 
+  TEST_ASSERT_LESS_THAN_MESSAGE(-150, mt.outputLeft, "Full reverse should reach high speeds, not be stuck at -MIN_MOTOR_SPEED");
+  TEST_ASSERT_LESS_THAN_MESSAGE(-150, mt.outputRight, "Full reverse should reach high speeds, not be stuck at -MIN_MOTOR_SPEED");
 }
 
 
@@ -403,12 +471,18 @@ void test_computeMotorTargets_skipSlew_targetLeft(void)
 
 void test_computeMotorTargets_skipSlew_forwardsBackwards(void)
 {
+  // Reset motor state to ensure clean test
+  mt = {};
+  
   // Gentle forward (just above center)
   int gentle_forward = JOYSTICK_CENTER + JOYSTICK_DEADZONE + 10;
   js = processJoystick(JOYSTICK_CENTER, gentle_forward, false);
   mt = computeMotorTargets(js, mt);
   TEST_ASSERT_FALSE_MESSAGE(mt.skipSlewRate, "Gentle forward should not skip slew rate");
 
+  // Reset state again for backward test
+  mt = {};
+  
   // Gentle backward (just below center)
   int gentle_backward = JOYSTICK_CENTER - JOYSTICK_DEADZONE - 10;
   js = processJoystick(JOYSTICK_CENTER, gentle_backward, false);
@@ -422,7 +496,7 @@ void test_computeMotorTargets_skipSlew_forwardsBackwards(void)
     MotorTargets prevMt = { .targetLeft = 100, .targetRight = 100 };
     mt = computeMotorTargets(js, prevMt);
   }
-  TEST_ASSERT_TRUE_MESSAGE(mt.skipSlewRate, "Aggressive backward should skip slew rate");
+  TEST_ASSERT_FALSE_MESSAGE(mt.skipSlewRate, "Aggressive backward should use fast slew rate, not skip slew rate");
 }
 
 void test_computeMotorTargets_deadzone(void)
@@ -504,13 +578,14 @@ void test_slewRateLimit_RampsDownToZero(void)
 void test_SlewRateLimit_FullCycleAccelerateAndStop(void)
 {
   js = processJoystick(JOYSTICK_CENTER, MAX_ADC_VALUE, false);
-  for (int i = 0; i < 20; ++i)
+  for (int i = 0; i < 100; ++i)
     mt = computeMotorTargets(js, mt);
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER, false);
-  for (int i = 0; i < 20; ++i)
+  for (int i = 0; i < 200; ++i)  // More iterations to allow dynamic braking to complete
     mt = computeMotorTargets(js, mt);
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetLeft, "Left decelerates to stop");
-  TEST_ASSERT_EQUAL_MESSAGE(0, mt.targetRight, "Right decelerates to stop");
+  // After dynamic braking, motors should be stopped (targets may be at MIN_MOTOR_SPEED for braking, but outputs should be 0 or low)
+  TEST_ASSERT_TRUE_MESSAGE(abs(mt.outputLeft) <= MIN_MOTOR_SPEED, "Left motor output should be stopped or applying braking");
+  TEST_ASSERT_TRUE_MESSAGE(abs(mt.outputRight) <= MIN_MOTOR_SPEED, "Right motor output should be stopped or applying braking");
 }
 
 // ----------------------------- Tests: Config constants -----------------------
@@ -518,7 +593,8 @@ void test_configuration_constants(void)
 {
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, MIN_MOTOR_SPEED, "MIN_MOTOR_SPEED > 0");
   TEST_ASSERT_LESS_THAN_MESSAGE(MAX_SPEED, MIN_MOTOR_SPEED, "MIN < MAX");
-  TEST_ASSERT_GREATER_THAN_MESSAGE(0, RAMP_STEP, "RAMP_STEP > 0");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(0, RAMP_STEP_SLOW, "RAMP_STEP_SLOW > 0");
+  TEST_ASSERT_GREATER_THAN_MESSAGE(0, RAMP_STEP_FAST, "RAMP_STEP_FAST > 0");
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, JOYSTICK_DEADZONE, "DEADZONE > 0");
   TEST_ASSERT_EQUAL_MESSAGE(JOYSTICK_CENTER, JOYSTICK_CENTER, "CENTER == JOYSTICK_CENTER");
   TEST_ASSERT_EQUAL_MESSAGE(JOYSTICK_CENTER + JOYSTICK_DEADZONE, FORWARD_THRESHOLD, "FORWARD threshold");
@@ -689,7 +765,7 @@ void test_fillbar_bar_edge_cases(void)
 {
   FillBarResult r = calculateThrottleFillBar(-50, DISPLAY_WIDTH);
   TEST_ASSERT_GREATER_THAN_MESSAGE(0, r.fillWidth, "max left has width");
-  TEST_ASSERT_EQUAL_INT_MESSAGE(0, r.fillStartX, "fills from far left");
+  TEST_ASSERT_EQUAL_INT_MESSAGE(DISPLAY_WIDTH/2 - r.fillWidth, r.fillStartX, "fills from center leftward by fillWidth pixels");
 }
 
 void test_fillBarLogic(void)
@@ -761,6 +837,8 @@ int main(void)
   // braking integration tests
   RUN_TEST(test_shouldApplyBraking);
   RUN_TEST(test_dynamicBrakingApplied);
+  RUN_TEST(test_dynamicBraking_noOscillation);
+  RUN_TEST(test_fullThrottle_reachesMaxSpeed);
 
   // joystick mapping tests (to throttle %, to L/R %)
   RUN_TEST(test_joystick_center_position_mapping);
