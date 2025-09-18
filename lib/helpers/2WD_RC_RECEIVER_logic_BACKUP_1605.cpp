@@ -39,8 +39,7 @@ long map(long x, long in_min, long in_max, long out_min, long out_max)
 #define analogWrite(pin, val) ((void)0)
 #define analogRead(pin) (0)
 #define delay(ms) ((void)0)
-static unsigned long __test_millis = 0;
-#define millis() (__test_millis += 20)
+#define millis() (0UL)
 #define tone(pin, freq) ((void)0)
 #define noTone(pin) ((void)0)
 #define pinMode(pin, mode) ((void)0)
@@ -210,13 +209,19 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         float offset_half = LR_OFFSET / 2.0f;
         if (js.steppedRatioLR < 0)
         {
-            mt.targetLeft = -base_sp + offset_half;
-            mt.targetRight = base_sp - offset_half;
+            if (js.steppedRatioLR <= -0.75f)
+                mt.targetLeft = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
+            else
+                mt.targetLeft = 0;
+            mt.targetRight = max(base_sp + offset_half, MIN_MOTOR_SPEED);
         }
         else if (js.steppedRatioLR > 0)
         {
-            mt.targetLeft = base_sp + offset_half;
-            mt.targetRight = -base_sp - offset_half;
+            if (js.steppedRatioLR >= 0.75f)
+                mt.targetRight = min(-base_sp - offset_half, -MIN_MOTOR_SPEED);
+            else
+                mt.targetRight = 0;
+            mt.targetLeft = max(base_sp + offset_half, MIN_MOTOR_SPEED);
         }
         mt.skipSlewRate = (fabs(js.steppedRatioLR) >= 0.90f);
         // Slew rate logic
@@ -244,8 +249,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     if (js.rawY > FORWARD_THRESHOLD)
     {
         sp = map(constrain(js.rawY, FORWARD_THRESHOLD, MAX_ADC_VALUE), FORWARD_THRESHOLD, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
-        mt.targetLeft = sp;
-        mt.targetRight = sp;
+        mt.targetLeft = sp - offset_half;
+        mt.targetRight = sp + offset_half;
         mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
         
         // Calculate deflection for variable slew rate (how far from center toward max)
@@ -266,13 +271,13 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
 
         // printf("[computeMotorTargets - forwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
 
-        // return mt;
+        return mt;
     }
     else if (js.rawY < BACKWARD_THRESHOLD)
     {
         sp = map(constrain(js.rawY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
-        mt.targetLeft = sp;
-        mt.targetRight = sp;
+        mt.targetLeft = sp + offset_half; // For reverse, swap sign
+        mt.targetRight = sp - offset_half;
         mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
         
         // Calculate deflection for variable slew rate (how far from center toward min)  
@@ -293,54 +298,17 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
 
         // printf("[computeMotorTargets - backwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
 
-        // return mt; 
-    }
-
-    // Fix max diagonal logic to ensure motor speeds reach the expected range
-    if (js.rawX == MAX_ADC_VALUE && js.rawY == MAX_ADC_VALUE) {
-        mt.targetLeft = MAX_SPEED;
-        mt.targetRight = MAX_SPEED;
-    }
-
-    // Fix partial forward-right logic to ensure both wheels move
-    if (js.rawX > JOYSTICK_CENTER && js.rawY > JOYSTICK_CENTER) {
-        mt.targetLeft = map(js.rawY, JOYSTICK_CENTER, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
-        mt.targetRight = map(js.rawX, JOYSTICK_CENTER, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
+        return mt; // ignore turn tank mixing at low x-deflection
     }
 
     // Default: simple tank mixing (convert to centered values for mixing)
-    // If X deflection is within deadzone, skip mixing and return straight values
-    if (fabs(js.rawRatioLR) >= (JOYSTICK_DEADZONE_RATIO * 1.10f)) {
-
-        // printf("[computeMotorTargets - skip mixing] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-        
-        int centeredY = js.rawY - JOYSTICK_CENTER;
-        int centeredX = js.rawX - JOYSTICK_CENTER;
-        int turn = centeredX / 2;
-        int left = centeredY + centeredX + turn;
-        int right = centeredY - centeredX - turn;
-        // If both axes are in the top-right quadrant, ensure both wheels move forward
-        if (js.rawX > JOYSTICK_CENTER && js.rawY > JOYSTICK_CENTER) {
-            left = constrain(left, MIN_MOTOR_SPEED, MAX_SPEED);
-            right = constrain(right, MIN_MOTOR_SPEED, MAX_SPEED);
-        } else if (js.rawX > JOYSTICK_CENTER && js.rawY < JOYSTICK_CENTER) {
-            // Partial backward + slight right: left wheel must move backward
-            left = constrain(left, -MAX_SPEED, -MIN_MOTOR_SPEED);
-            right = constrain(right, -MAX_SPEED, MAX_SPEED);
-        } else if (js.rawX < JOYSTICK_CENTER && js.rawY < JOYSTICK_CENTER) {
-            // Partial backward + slight left: right wheel must move backward
-            left = constrain(left, -MAX_SPEED, MAX_SPEED);
-            right = constrain(right, -MAX_SPEED, -MIN_MOTOR_SPEED);
-        } else {
-            left = constrain(left, -MAX_SPEED, MAX_SPEED);
-            right = constrain(right, -MAX_SPEED, MAX_SPEED);
-        }
-
-        mt.targetLeft = left;
-        mt.targetRight = right;
-    }
-
-
+    int centeredY = js.rawY - JOYSTICK_CENTER; // Convert to -512 to +511 for mixing
+    int centeredX = js.rawX - JOYSTICK_CENTER; // Convert to -512 to +511 for mixing
+    mt.targetLeft = centeredY + centeredX;
+    mt.targetRight = centeredY - centeredX;
+    int turn = centeredX / 2;
+    mt.targetLeft = constrain(mt.targetLeft + turn, -MAX_SPEED, MAX_SPEED);
+    mt.targetRight = constrain(mt.targetRight - turn, -MAX_SPEED, MAX_SPEED);
     // Apply LR_OFFSET as L/R balance if moving in same direction
     if ((mt.targetLeft > 0 && mt.targetRight > 0))
     {
@@ -377,21 +345,12 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     mt.brakingApplied = false;
     // If either wheel is above MIN_MOTOR_SPEED, force both to at least MIN_MOTOR_SPEED (with correct sign)
     // Clamp each wheel independently: only move if above threshold
-    // Always move at least MIN_MOTOR_SPEED in the expected direction if outside deadzone
-    if (nextLeft > 0 && nextLeft < MIN_MOTOR_SPEED)
-        mt.outputLeft = MIN_MOTOR_SPEED;
-    else if (nextLeft < 0 && nextLeft > -MIN_MOTOR_SPEED)
-        mt.outputLeft = -MIN_MOTOR_SPEED;
-    else if (abs(nextLeft) >= MIN_MOTOR_SPEED)
+    if (abs(nextLeft) >= MIN_MOTOR_SPEED)
         mt.outputLeft = nextLeft;
     else
         mt.outputLeft = 0;
 
-    if (nextRight > 0 && nextRight < MIN_MOTOR_SPEED)
-        mt.outputRight = MIN_MOTOR_SPEED;
-    else if (nextRight < 0 && nextRight > -MIN_MOTOR_SPEED)
-        mt.outputRight = -MIN_MOTOR_SPEED;
-    else if (abs(nextRight) >= MIN_MOTOR_SPEED)
+    if (abs(nextRight) >= MIN_MOTOR_SPEED)
         mt.outputRight = nextRight;
     else
         mt.outputRight = 0;
