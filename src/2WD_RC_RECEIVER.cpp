@@ -31,8 +31,7 @@ uint32_t packetHistory = 32;
 uint8_t packetIndex = 0;
 
 // Packet structures - MUST MATCH TRANSMITTER EXACTLY
-struct JoystickData
-{
+struct JoystickData {
   int xValue;         // 16-bit int (matches transmitter)
   int yValue;         // 16-bit int (matches transmitter)
   bool buttonPressed; // 8-bit bool (matches transmitter)
@@ -64,8 +63,7 @@ void beep(bool isActive);
 bool updateVoltageReading(RxData &rxData);
 
 // Entertainer melody functions
-struct EntertainerState
-{
+struct EntertainerState {
   int noteIndex = 0;
   unsigned long phaseStart = 0;
   int phase = 0;
@@ -75,17 +73,14 @@ static EntertainerState entertainerState;
 bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt);
 
 // Free memory utility
-int freeMemory()
-{
+int freeMemory() {
   extern int __heap_start, *__brkval;
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
 }
 
-void setup()
-{
+void setup() {
   pinMode(VOLTAGE_ADC_PIN, INPUT);
-
   Serial.begin(9600);
   delay(1000);
 
@@ -124,15 +119,13 @@ void setup()
   Serial.println("Setup complete!");
 }
 
-void initRadio()
-{
+void initRadio() {
   Serial.println("Initializing radio...");
 
   // Allocate radio object dynamically
   radio = new RF24(NRF_CE_PIN, NRF_CSN_PIN);
 
-  if (radio && radio->begin())
-  {
+  if (radio && radio->begin()) {
     Serial.println("NRF24L01 initialized successfully.");
 
     // Configure radio - MATCH TRANSMITTER EXACTLY
@@ -158,17 +151,13 @@ void initRadio()
 
     // Success beeps
     beep(100);
-    beep(100);
-  }
-  else
-  {
+  } else {
     Serial.println("NRF24L01 failed to initialize!");
     beep(1000); // Error beep
   }
 }
 
-void loop()
-{
+void loop() {
   uint8_t state = 0;           // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
   if (prevMotorValues.targetLeft > 0 && prevMotorValues.targetRight > 0)
     state = 1;
@@ -178,8 +167,6 @@ void loop()
     state = 3;
 
   // Pack response data
-  // Prepare response data for transmitter
-
   updateVoltageReading(rxData);
 
   uint8_t mode = 0; // 0 = normal/manual mode (update to add more modes)
@@ -188,58 +175,45 @@ void loop()
   rxData.successRate = (uint8_t)(getSuccessRate() * 255); // Scale to 0-255
 
   // Pre-load ACK payload for next transmission (ALWAYS do this)
-  if (radio)
-  {
+  if (radio) {
     radio->writeAckPayload(0, &rxData, sizeof(RxData));
   }
 
   static int rfLostCounter = 0;
-
-  MotorTargets mt = {}; 
+  MotorTargets mt = {};
   bool isRead = readRFSignals();
 
-  if (isRead)
-  {
+  if (isRead) {
     rfLostCounter = 0; // Reset RF lost counter
 
     JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
-  mt = computeMotorTargets(js, prevMotorValues);
+    mt = computeMotorTargets(js, prevMotorValues);
     setMotorSpeeds(mt.outputLeft, mt.outputRight);
 
     // Update prevMotorValues for next cycle
-    prevMotorValues.targetLeft = mt.targetLeft;
-    prevMotorValues.targetRight = mt.targetRight;
-    prevMotorValues.outputLeft = mt.outputLeft;
-    prevMotorValues.outputRight = mt.outputRight;
-    prevMotorValues.skipSlewRate = mt.skipSlewRate;
-    prevMotorValues.brakingApplied = mt.brakingApplied;
+    prevMotorValues = mt;
 
     // Buzzer feedback
     beep(js.buzzerOn);
 
     // Update packet history with successful reception
     updatePacketHistory(true);
-  }
-  else if (rfLostCounter++ * LOOP_DELAY_MS > 440)
-  { // RF signal lost after ~0.5s
+  } else if (rfLostCounter++ * LOOP_DELAY_MS > 440) { // RF signal lost after ~0.5s
     setMotorSpeeds(0, 0);
 
     // Update prevMotorValues to stopped
-    prevMotorValues.targetLeft = 0;
-    prevMotorValues.targetRight = 0;
+    prevMotorValues = {0, 0, 0, 0, false, false};
 
     // Update packet history with failure
     updatePacketHistory(false);
 
-    // Serial.println("RF SIGNAL LOSS: STOPPING...");
     rfLostCounter = 441;  // Prevent overflow
   }
-  
+
   // Status reporting every n milliseconds
   static unsigned long lastStatusTime = 0;
 
-  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000))
-  {
+  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000)) {
     // Use last computed MotorTargets for status
     printStatusReport(rxData, isRead, mt);
     lastStatusTime = millis();
