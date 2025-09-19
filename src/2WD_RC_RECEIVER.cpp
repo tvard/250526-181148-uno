@@ -310,9 +310,14 @@ float getSuccessRate()
   }
   return (float)count / PACKET_HISTORY_SIZE;
 }
-// Motor control functions (unchanged for space - your existing implementations)
+
+// Motor control functions  
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
+  // if (Serial) {
+  //   return; // Disable motors if Serial is active (for safety during debugging)
+  // }
+
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 

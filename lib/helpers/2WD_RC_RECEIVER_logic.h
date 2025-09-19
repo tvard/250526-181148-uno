@@ -16,7 +16,7 @@ const int RAMP_STEP_FAST = 60;      // fast slew rate step (for aggressive joyst
 // All drive/motor logic for the RECEIVER side
 // (mirrors the pattern of 2WD_RC_TRANSMITTER_logic.h/cpp)
 
-int slewRateLimit(int current, int target, float deflection);  // applies slew rate limiting to move current speed towards target speed
+int slewRateLimit(int current, int target, float deflection, unsigned long now, unsigned long& lastSlewUpdate);
 MotorTargets computeMotorTargets(const JoystickProcessingResult& js, const MotorTargets& prevMt);
 bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetRight);
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight);

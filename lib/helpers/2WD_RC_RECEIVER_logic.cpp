@@ -69,8 +69,13 @@ struct
 /// @param target The desired target speed value.
 /// @return The new speed value after applying the slew rate limit.
 // Variable slew rate: pass in joystick deflection (0.0-1.0) to select slew rate
-int slewRateLimit(int current, int target, float deflection)
+int slewRateLimit(int current, int target, float deflection, unsigned long now, unsigned long& lastSlewUpdate)
 {
+    const unsigned long SLEW_UPDATE_INTERVAL = 20; // ms
+    if (now - lastSlewUpdate < SLEW_UPDATE_INTERVAL)
+        return current;
+    lastSlewUpdate = now;
+
     int rampStep = RAMP_STEP_SLOW;
     if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD) {
         rampStep = RAMP_STEP_FAST;
@@ -161,6 +166,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     MotorTargets mt = {};
     int nextLeft = prevMt.outputLeft;
     int nextRight = prevMt.outputRight;
+    static unsigned long lastSlewUpdateLeft = 0;
+    static unsigned long lastSlewUpdateRight = 0;
 
     unsigned long now = millis();
 
@@ -189,9 +196,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         {
             // Slew rate limit toward zero
             if (nextLeft != 0)
-                nextLeft = slewRateLimit(nextLeft, 0, 0.0f);
+                nextLeft = slewRateLimit(nextLeft, 0, 0.0f, now, lastSlewUpdateLeft);
             if (nextRight != 0)
-                nextRight = slewRateLimit(nextRight, 0, 0.0f);
+                nextRight = slewRateLimit(nextRight, 0, 0.0f, now, lastSlewUpdateRight);
             mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
             mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         }
@@ -203,8 +210,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
 
     static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
 
-    // In-place turn - when Y stick is near center (512) AND significant X deflection
-    if (abs(js.rawY - JOYSTICK_CENTER) < (0.02f * MAX_ADC_VALUE) && fabs(js.steppedRatioLR) >= JOYSTICK_DEADZONE_RATIO)
+    // In-place turn: prioritize joystick intent (large X, Y near center) rather than prior wheel motion.
+    // Regression fix: previously small residual reverse output prevented entering turn, causing unintended reverse.
+    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && fabs(js.steppedRatioLR) >= FULL_TURN_THRESHOLD)
     {
         int base_sp = MIN_MOTOR_SPEED + 1;
         float offset_half = LR_OFFSET / 2.0f;
@@ -225,9 +233,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             nextRight = mt.targetRight;
         } else {
             if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f);
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f, now, lastSlewUpdateLeft);
             if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f);
+                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f, now, lastSlewUpdateRight);
         }
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
@@ -256,9 +264,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             nextRight = mt.targetRight;
         } else {
             if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection);
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection, now, lastSlewUpdateLeft);
             if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection);
+                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection, now, lastSlewUpdateRight);
         }
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
@@ -283,9 +291,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             nextRight = mt.targetRight;
         } else {
             if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection);
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection, now, lastSlewUpdateLeft);
             if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection);
+                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection, now, lastSlewUpdateRight);
         }
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
@@ -310,7 +318,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
 
     // Default: simple tank mixing (convert to centered values for mixing)
     // If X deflection is within deadzone, skip mixing and return straight values
-    if (fabs(js.rawRatioLR) >= (JOYSTICK_DEADZONE_RATIO * 1.10f)) {
+    if (fabs(js.rawRatioLR) >= JOYSTICK_DEADZONE_RATIO) {
 
         // printf("[computeMotorTargets - skip mixing] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
         
@@ -368,10 +376,10 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         nextRight = prevMt.outputRight;
     } 
     else {
-        if (nextLeft != mt.targetLeft)
-            nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f);
-        if (nextRight != mt.targetRight)
-            nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f);
+            if (nextLeft != mt.targetLeft)
+                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f, now, lastSlewUpdateLeft);
+            if (nextRight != mt.targetRight)
+                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f, now, lastSlewUpdateRight);
     }
 
     mt.brakingApplied = false;
@@ -425,9 +433,11 @@ bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetR
 
 bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight)
 {
-    // Only brake when stopping from motion (not on direction reversal)
-    return (abs(targetLeft) <= MIN_MOTOR_SPEED && abs(targetRight) <= MIN_MOTOR_SPEED &&
-        (abs(prevLeft) >= BRAKE_APPLY_THRESHOLD || abs(prevRight) >= BRAKE_APPLY_THRESHOLD));
+    // Apply braking when stopping from motion (not on direction reversal)
+    // Braking applies if target is approaching zero and the drop is large
+    bool leftBraking = (abs(prevLeft) >= BRAKE_APPLY_THRESHOLD && abs(targetLeft) < abs(prevLeft) && abs(targetLeft) <= MIN_MOTOR_SPEED);
+    bool rightBraking = (abs(prevRight) >= BRAKE_APPLY_THRESHOLD && abs(targetRight) < abs(prevRight) && abs(targetRight) <= MIN_MOTOR_SPEED);
+    return leftBraking || rightBraking;
 }
 
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton)

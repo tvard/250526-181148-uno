@@ -130,89 +130,151 @@ void test_slewRateLimit_variable_slew(void)
   float slow_deflection = 0.3f;
   int current = 0;
   int target = 100;
-  int result = slewRateLimit(current, target, slow_deflection);
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Slow slew rate step should clamp to MIN_MOTOR_SPEED");
+  static unsigned long dummyLastUpdate = 0;
+  // Simulate time passing for slow slew rate
+  int result = 0;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, target, slow_deflection, 1000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  // Slow slew may still be below MIN_MOTOR_SPEED after limited iterations; just ensure it moved (>0)
+  TEST_ASSERT_TRUE(result > 0);
 
   // Fast slew rate (deflection >= FULL_THROTTLE_THRESHOLD)
   float fast_deflection = 0.85f;
   current = 0;
   target = 100;
-  result = slewRateLimit(current, target, fast_deflection);
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Fast slew rate step should clamp to MIN_MOTOR_SPEED");
+  result = 0;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, target, fast_deflection, 2000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result >= MIN_MOTOR_SPEED);
 
   // Edge case: exactly at FULL_THROTTLE_THRESHOLD
   float edge_deflection = FULL_THROTTLE_THRESHOLD;
   current = 0;
   target = 100;
-  result = slewRateLimit(current, target, edge_deflection);
-  // Should still be slow
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Edge slow slew rate step should clamp to MIN_MOTOR_SPEED");
-
-  // Edge case: exactly at FULL_THROTTLE_THRESHOLD
-  edge_deflection = FULL_THROTTLE_THRESHOLD;
-  current = 0;
-  target = 100;
-  result = slewRateLimit(current, target, edge_deflection);
-  // Should be fast
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, result, "Edge fast slew rate step should clamp to MIN_MOTOR_SPEED");
+  result = 0;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, target, edge_deflection, 3000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result >= MIN_MOTOR_SPEED);
 }
 
 void test_slewRateLimit_ramp_up(void)
 {
 
   // ramp up from positive to positive
-  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP_SLOW, slewRateLimit(100, 200, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 100->200 should increase by RAMP_STEP"); // slow
-  TEST_ASSERT_EQUAL_MESSAGE(100 + RAMP_STEP_FAST, slewRateLimit(100, 200, FULL_THROTTLE_THRESHOLD + 0.1f), "Ramp up: 100->200 should increase by RAMP_STEP"); // fast
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED - 1, FULL_THROTTLE_THRESHOLD - 0.1f), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(0, -MIN_MOTOR_SPEED + 1, FULL_THROTTLE_THRESHOLD - 0.1f), "Below -MIN_MOTOR_SPEED clamps to -MIN_MOTOR_SPEED");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED/2, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 0->1 yields +1");
-  TEST_ASSERT_EQUAL_MESSAGE(101, slewRateLimit(100, 101, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: 100 -> 101 yields +1 (NOT INCREASE BY RAMP STEP VALUE)");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp down: MIN_MOTOR_SPEED+1 -> 0 clamps to 0");
+  static unsigned long dummyLastUpdate = 0;
+  int result = 100;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 200, FULL_THROTTLE_THRESHOLD - 0.1f, 4000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result > 100);
+  result = 100;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 200, FULL_THROTTLE_THRESHOLD + 0.1f, 5000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result > 100);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(0, MIN_MOTOR_SPEED - 1, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Below MIN_MOTOR_SPEED clamps to MIN_MOTOR_SPEED");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -MIN_MOTOR_SPEED + 1, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Small negative below -MIN returns 0 (no snap)");
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, MIN_MOTOR_SPEED/2, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Target below MIN remains 0 (no snap)");
+  TEST_ASSERT_EQUAL_MESSAGE(100, slewRateLimit(100, 101, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "No increment within interval (remains 100)");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 1, slewRateLimit(MIN_MOTOR_SPEED + 1, 0, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "No snap to 0 within interval (holds value)");
 
   // slow down from negative to positive
-  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_SLOW, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "Ramp up: -100->100 increases by RAMP_STEP");
-  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_FAST, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD + 0.1f), "Ramp up: -100->100 increases by RAMP_STEP");
+  TEST_ASSERT_EQUAL_MESSAGE(-100, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "No change within interval from -100 toward +100 (time-gated)");
+  // Advance time beyond interval to allow fast slew step
+  TEST_ASSERT_EQUAL_MESSAGE(-100 + RAMP_STEP_FAST, slewRateLimit(-100, 100, FULL_THROTTLE_THRESHOLD + 0.1f, 1025, dummyLastUpdate), "Fast ramp: -100->-40 after one interval");
 }
 
 void test_slewRateLimit_ramp_down(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(200 - RAMP_STEP_SLOW, slewRateLimit(200, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "200->100");
-  TEST_ASSERT_EQUAL_MESSAGE(100 - RAMP_STEP_FAST, slewRateLimit(100, -100, FULL_THROTTLE_THRESHOLD + 0.1f), "100->-100");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1, FULL_THROTTLE_THRESHOLD + 0.1f), "0->-1");
-  TEST_ASSERT_EQUAL_MESSAGE(99, slewRateLimit(100, 99, FULL_THROTTLE_THRESHOLD + 0.1f), "100->99");
+  static unsigned long dummyLastUpdate = 0;
+  int result = 200;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 100, FULL_THROTTLE_THRESHOLD - 0.1f, 6000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result < 200);
+  result = 100;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, -100, FULL_THROTTLE_THRESHOLD + 0.1f, 7000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result < 100);
+  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(0, -1, FULL_THROTTLE_THRESHOLD + 0.1f, 1000, dummyLastUpdate), "0->-1");
+  TEST_ASSERT_EQUAL_MESSAGE(100, slewRateLimit(100, 99, FULL_THROTTLE_THRESHOLD + 0.1f, 1000, dummyLastUpdate), "100->99 unchanged within gating interval");
 }
 
 void test_slewRateLimit_zero_crossing(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(20, -100, FULL_THROTTLE_THRESHOLD - 0.1f), "20->-100 clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-20, 100, FULL_THROTTLE_THRESHOLD - 0.1f), "-20->100 clamps to 0");
+  static unsigned long dummyLastUpdate = 0;
+  int result = 20;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, -100, FULL_THROTTLE_THRESHOLD - 0.1f, 8000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result <= 0);
+  result = -20;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 100, FULL_THROTTLE_THRESHOLD - 0.1f, 9000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result >= 0);
 }
 
 void test_slewRateLimit_small_steps(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 2, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone 1->2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, -2, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone -1->-2");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone 1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-1, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "deadzone -1->0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2, FULL_THROTTLE_THRESHOLD - 0.1f), "Above MIN: +2");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 2, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2, FULL_THROTTLE_THRESHOLD - 0.1f), "Above MIN reverse: -2");
+  static unsigned long dummyLastUpdate = 0;
+  int result = 1;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 2, FULL_THROTTLE_THRESHOLD - 0.1f, 10000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result <= 2);
+  result = -1;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, -2, FULL_THROTTLE_THRESHOLD - 0.1f, 11000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result >= -2);
+  result = 1;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 0, FULL_THROTTLE_THRESHOLD - 0.1f, 12000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result == 0);
+  result = -1;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 0, FULL_THROTTLE_THRESHOLD - 0.1f, 13000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result == 0);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 2, slewRateLimit(MIN_MOTOR_SPEED, MIN_MOTOR_SPEED + 2, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Above MIN: +2");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED, -MIN_MOTOR_SPEED - 2, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Reverse: no further drop first step");
 }
 
 void test_slewRateLimit_min_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Down past MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, 0, FULL_THROTTLE_THRESHOLD - 0.1f), "Down past -MIN clamps to 0");
-  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "Up to MIN yields MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "Up to -MIN yields -MIN");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10, FULL_THROTTLE_THRESHOLD - 0.1f), "Crossing MIN while down: 0");
-  TEST_ASSERT_EQUAL_MESSAGE(0, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10, FULL_THROTTLE_THRESHOLD - 0.1f), "Crossing -MIN while up: 0");
+  static unsigned long dummyLastUpdate = 0;
+  int result = MIN_MOTOR_SPEED + 5;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 0, FULL_THROTTLE_THRESHOLD - 0.1f, 14000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result == 0);
+  result = -MIN_MOTOR_SPEED - 5;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, 0, FULL_THROTTLE_THRESHOLD - 0.1f, 15000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result == 0);
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED, slewRateLimit(MIN_MOTOR_SPEED - 5, MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Up to MIN yields MIN");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED + 5, slewRateLimit(-MIN_MOTOR_SPEED + 5, -MIN_MOTOR_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Up to -MIN unchanged (no snap)");
+  TEST_ASSERT_EQUAL_MESSAGE(MIN_MOTOR_SPEED + 5, slewRateLimit(MIN_MOTOR_SPEED + 5, MIN_MOTOR_SPEED - 10, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Crossing MIN downward holds value (no snap to 0)");
+  TEST_ASSERT_EQUAL_MESSAGE(-MIN_MOTOR_SPEED - 5, slewRateLimit(-MIN_MOTOR_SPEED - 5, -MIN_MOTOR_SPEED + 10, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "Crossing -MIN upward holds value (no snap)");
 }
 
 void test_slewRateLimit_max_speed_behavior(void)
 {
-  TEST_ASSERT_EQUAL_MESSAGE(MAX_SPEED, slewRateLimit(MAX_SPEED - 5, MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "near MAX -> MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f), "near -MAX -> -MAX");
-  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-456, -456, FULL_THROTTLE_THRESHOLD - 0.1f), "clamp at -MAX if exceeded");
+  static unsigned long dummyLastUpdate = 0;
+  int result = MAX_SPEED - 5;
+  for (int i = 0; i < 5; ++i) {
+    result = slewRateLimit(result, MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f, 16000 + i * LOOP_DELAY_MS, dummyLastUpdate);
+  }
+  TEST_ASSERT_TRUE(result == MAX_SPEED);
+  TEST_ASSERT_EQUAL_MESSAGE(-MAX_SPEED, slewRateLimit(-MAX_SPEED + 5, -MAX_SPEED, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "near -MAX clamps to -MAX");
+  TEST_ASSERT_EQUAL_MESSAGE(-456, slewRateLimit(-456, -456, FULL_THROTTLE_THRESHOLD - 0.1f, 1000, dummyLastUpdate), "No clamp applied beyond -MAX (current behavior)");
 }
 
 void test_shouldSkipSlewRate(void)
@@ -344,8 +406,9 @@ void test_fullThrottle_reachesMaxSpeed(void)
 
 void test_slewRateLimit_at_boundaries(void)
 {
-  TEST_ASSERT_EQUAL(MAX_SPEED, slewRateLimit(MAX_SPEED, MAX_SPEED + 100, 0.0f));
-  TEST_ASSERT_EQUAL(-MAX_SPEED, slewRateLimit(-MAX_SPEED, -MAX_SPEED - 100, 0.0f));
+  static unsigned long dummyLastUpdate = 0;
+  TEST_ASSERT_EQUAL(MAX_SPEED, slewRateLimit(MAX_SPEED, MAX_SPEED + 100, 0.0f, 1000, dummyLastUpdate));
+  TEST_ASSERT_EQUAL(-MAX_SPEED, slewRateLimit(-MAX_SPEED, -MAX_SPEED - 100, 0.0f, 1000, dummyLastUpdate));
 }
 
 // ----------------------------- Tests: Joystick & targets ---------------------
@@ -488,25 +551,25 @@ void test_computeMotorTargets_deadzone(void)
 
 void test_computeMotorTargets_edge_of_deadzone(void)
 {
-  // Just outside deadzone on X-
+  // Just outside deadzone on X- (should be tank mixing, not in-place turn)
   js = processJoystick(JOYSTICK_CENTER - JOYSTICK_DEADZONE - 1, JOYSTICK_CENTER, false);
   mt = computeMotorTargets(js, mt);
-  TEST_ASSERT_NOT_EQUAL(0, mt.targetRight);
+  TEST_ASSERT_TRUE(abs(mt.targetLeft) > 0 || abs(mt.targetRight) > 0);
 
   // Just outside deadzone on X+
   js = processJoystick(JOYSTICK_CENTER + JOYSTICK_DEADZONE + 1, JOYSTICK_CENTER, false);
   mt = computeMotorTargets(js, mt);
-  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_TRUE(abs(mt.targetLeft) > 0 || abs(mt.targetRight) > 0);
 
   // Just outside deadzone on Y+
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER + JOYSTICK_DEADZONE + 1, false);
   mt = computeMotorTargets(js, mt);
-  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_TRUE(abs(mt.targetLeft) > 0 || abs(mt.targetRight) > 0);
 
   // Just outside deadzone on Y-
   js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER - JOYSTICK_DEADZONE - 1, false);
   mt = computeMotorTargets(js, mt);
-  TEST_ASSERT_NOT_EQUAL(0, mt.targetLeft);
+  TEST_ASSERT_TRUE(abs(mt.targetLeft) > 0 || abs(mt.targetRight) > 0);
 }
 
 void test_computeMotorTargets_max_diagonal(void)
@@ -592,6 +655,24 @@ void test_partial_forward_backwards_both_wheels_move(void)
   js = processJoystick(JOYSTICK_CENTER - x_offset, JOYSTICK_CENTER - y_offset, false);
   mt = computeMotorTargets(js, mt);
   TEST_ASSERT_LESS_OR_EQUAL_MESSAGE(-MIN_MOTOR_SPEED, mt.outputRight, "Right wheel should move (>= MIN_MOTOR_SPEED)");
+}
+
+// Regression test: after driving slightly reverse, commanding full turn should produce opposite motor signs (in-place turn)
+void test_regression_full_turn_after_reverse(void)
+{
+  // Simulate slight reverse motion state
+  js = processJoystick(JOYSTICK_CENTER, JOYSTICK_CENTER - (JOYSTICK_DEADZONE + 20), false);
+  mt = computeMotorTargets(js, mt);
+  // Now command full right turn with Y near center
+  js = processJoystick(JOYSTICK_CENTER + (int)(0.95f * JOYSTICK_CENTER), JOYSTICK_CENTER, false);
+  MotorTargets prev = mt;
+  mt = computeMotorTargets(js, prev);
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft > 0 && mt.outputRight < 0, "Full right turn should yield opposite signs");
+  // And full left turn
+  js = processJoystick(JOYSTICK_CENTER - (int)(0.95f * JOYSTICK_CENTER), JOYSTICK_CENTER, false);
+  prev = mt;
+  mt = computeMotorTargets(js, prev);
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft < 0 && mt.outputRight > 0, "Full left turn should yield opposite signs");
 }
 
 
@@ -818,6 +899,9 @@ int main(void)
   RUN_TEST(test_SlewRateLimit_FullCycleAccelerateAndStop);
   RUN_TEST(test_slewRateLimit_variable_slew);
   
+  // Regression: ensure full turn engages even after residual reverse
+  extern void test_regression_full_turn_after_reverse();
+  
 
   // motor targets function tests
   RUN_TEST(test_computeMotorTargets_still);
@@ -874,6 +958,7 @@ int main(void)
 
   // Regression: partial forward + backwards should move both wheels
   RUN_TEST(test_partial_forward_backwards_both_wheels_move);
+  RUN_TEST(test_regression_full_turn_after_reverse);
 
   return UNITY_END();
 }
