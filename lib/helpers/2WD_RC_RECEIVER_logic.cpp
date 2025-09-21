@@ -81,14 +81,13 @@ struct
 // Variable slew rate: pass in joystick deflection (0.0-1.0) to select slew rate
 int slewRateLimit(int current, int target, float deflection, unsigned long now, unsigned long& lastSlewUpdate)
 {
-    const unsigned long SLEW_UPDATE_INTERVAL = 50; // ms
     if (now - lastSlewUpdate < SLEW_UPDATE_INTERVAL)
         return current;
     lastSlewUpdate = now;
 
     int rampStep = RAMP_STEP_SLOW;
-    if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD) {
-        rampStep = RAMP_STEP_FAST;
+    if (deflection >= FULL_THROTTLE_THRESHOLD || deflection >= FULL_TURN_THRESHOLD || FAST_SLEW_MODE) {
+        rampStep = FAST_SLEW_MODE ? RAMP_STEP_FAST_AF : RAMP_STEP_FAST_MEH;
     }
 
     // Ensure rampStep at least 1
@@ -236,7 +235,6 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             mt.targetRight = -base_sp;
         }
         mt.skipSlewRate = (abs(lrPercent) >= 90);
-        
         if (mt.skipSlewRate) {
             nextLeft = mt.targetLeft;
             nextRight = mt.targetRight;
@@ -250,6 +248,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
         mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+
         return mt;
     }
 
@@ -388,12 +387,11 @@ bool shouldSkipSlewRate(int prevLeft, int prevRight, int targetLeft, int targetR
     return false;
 }
 
-bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight)
-{
-    // Apply braking when stopping from motion (not on direction reversal)
-    // Braking applies if target is approaching zero and the drop is large
-    bool leftBraking = (abs(prevLeft) >= BRAKE_APPLY_THRESHOLD && abs(targetLeft) < abs(prevLeft) && abs(targetLeft) <= MIN_MOTOR_SPEED);
-    bool rightBraking = (abs(prevRight) >= BRAKE_APPLY_THRESHOLD && abs(targetRight) < abs(prevRight) && abs(targetRight) <= MIN_MOTOR_SPEED);
+bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetRight) {
+    // Only apply braking if both motors were moving in same direction
+    bool sameDirection = (prevLeft > 0 && prevRight > 0) || (prevLeft < 0 && prevRight < 0);
+    bool leftBraking = sameDirection && (abs(prevLeft) >= BRAKE_APPLY_THRESHOLD && abs(targetLeft) < abs(prevLeft) && abs(targetLeft) <= MIN_MOTOR_SPEED);
+    bool rightBraking = sameDirection && (abs(prevRight) >= BRAKE_APPLY_THRESHOLD && abs(targetRight) < abs(prevRight) && abs(targetRight) <= MIN_MOTOR_SPEED);
     return leftBraking || rightBraking;
 }
 

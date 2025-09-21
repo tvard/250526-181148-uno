@@ -48,9 +48,13 @@ int joystickX = 512; // Center position (range: 0-1023)
 int joystickY = 512; // Center position (range: 0-1023)
 bool joystickButton = false;
 
+// Fast slew mode toggle
+bool FAST_SLEW_MODE = false;
+
 // Function prototypes
 int freeMemory();
 void initRadio();
+void toggleFastSlewOnLongBeep(JoystickProcessingResult &js);
 bool readRFSignals();
 void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt);
 uint8_t calculateChecksum(const JoystickData &data);
@@ -196,6 +200,8 @@ void loop() {
     // Buzzer feedback
     beep(js.buzzerOn);
 
+    toggleFastSlewOnLongBeep(js);
+
     // Update packet history with successful reception
     updatePacketHistory(true);
   } else if (rfLostCounter++ * LOOP_DELAY_MS > 440) { // RF signal lost after ~0.5s
@@ -220,6 +226,30 @@ void loop() {
   }
 
   delay(LOOP_DELAY_MS);
+}
+
+void toggleFastSlewOnLongBeep(JoystickProcessingResult &js)
+{
+  static unsigned long lastBeepActive = 0;
+
+  // Toggle fast slew mode with (n)s beep button hold
+  if (js.buzzerOn)
+  {
+    if (millis() - lastBeepActive > 2000)
+    {
+      FAST_SLEW_MODE = !FAST_SLEW_MODE;
+      Serial.print("Fast slew mode ");
+      Serial.println(FAST_SLEW_MODE ? "ENABLED" : "DISABLED");
+      tone(BUZZER_PIN, FAST_SLEW_MODE ? 2000 : 500);
+      delay(200);
+      noTone(BUZZER_PIN);
+      lastBeepActive = millis(); // Reset to prevent multiple toggles
+    }
+  }
+  else
+  {
+    lastBeepActive = millis(); // Reset if button not pressed
+  }
 }
 
 bool readRFSignals()
