@@ -91,15 +91,19 @@ int slewRateLimit(int current, int target, float deflection, unsigned long now, 
         rampStep = RAMP_STEP_FAST;
     }
 
+    // Ensure rampStep at least 1
+    if (rampStep < 1) rampStep = 1;
+
     int delta = target - current;
     int next;
 
-    if (delta > rampStep)
+    if (delta > rampStep) {
         next = current + rampStep;
-    else if (delta < -rampStep)
+    } else if (delta < -rampStep) {
         next = current - rampStep;
-    else
+    } else {
         next = target;
+    }
 
     // 1. Clamp to 0 if both target and next are in the deadzone
     if (next > -MOTOR_DEADZONE && next < MOTOR_DEADZONE &&
@@ -107,10 +111,13 @@ int slewRateLimit(int current, int target, float deflection, unsigned long now, 
         return 0;
 
     // 2. Always clamp to MIN_MOTOR_SPEED when ramping up from 0, regardless of step size
-    if (current == 0 && next > 0)
+    if (current == 0 && target > 0) {
+        // start positive ramp at +MIN
         next = MIN_MOTOR_SPEED;
-    else if (current == 0 && next < 0)
-        next = (abs(target) >= MIN_MOTOR_SPEED) ? target : -MIN_MOTOR_SPEED;
+    } else if (current == 0 && target < 0) {
+        // start negative ramp at -MIN
+        next = -MIN_MOTOR_SPEED;
+    }
 
     // 3. Special case: when target is 0 and current > MIN_MOTOR_SPEED, clamp directly to 0 
     if (target == 0 && current > MIN_MOTOR_SPEED)
@@ -125,10 +132,11 @@ int slewRateLimit(int current, int target, float deflection, unsigned long now, 
         return -MIN_MOTOR_SPEED;
 
     // 4a. Special case: when target is MAX_SPEED and current is near MAX_SPEED, clamp directly to MAX_SPEED
-    if (target == MAX_SPEED && current > 0 && current < MAX_SPEED)
-        return MAX_SPEED;
-    else if (target == -MAX_SPEED && current < 0 && current > -MAX_SPEED)
-        return -MAX_SPEED;
+    // Remove instantaneous snap to MAX/ -MAX; allow normal ramping
+    if (target == MAX_SPEED && current > 0 && current >= MAX_SPEED - rampStep)
+        return MAX_SPEED; // near top, snap
+    else if (target == -MAX_SPEED && current < 0 && current <= -MAX_SPEED + rampStep)
+        return -MAX_SPEED; // near bottom, snap
 
     // 5. Special case: when crossing MIN_MOTOR_SPEED downward and target < MIN_MOTOR_SPEED, clamp to 0
     if (current > MIN_MOTOR_SPEED && target > 0 && target < MIN_MOTOR_SPEED)
