@@ -220,8 +220,11 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         return mt;
     }
 
+    
+    // Serial.println("Throttle: " + String(throttlePercent) + "%, LR: " + String(lrPercent) + "%");
+
     // Pure in-place turn: throttle near zero, high L/R deflection (use raw values for compatibility)
-    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && abs(lrPercent) >= 25 && abs(throttlePercent) < 40)
+    if ((abs(throttlePercent) < 30 && abs(lrPercent) >= 25))    
     {
         int base_sp = MIN_MOTOR_SPEED + 1;
         if (lrPercent < 0) // Left turn (negative LR)
