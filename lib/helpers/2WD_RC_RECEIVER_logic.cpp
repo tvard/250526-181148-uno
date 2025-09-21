@@ -1,4 +1,5 @@
 #include "2WD_RC_RECEIVER_logic.h"
+#include "2WD_RC_TRANSMITTER_logic.h" // For calculateThrottlePercent and calculateLeftRightPercent
 #include <stdlib.h>
 #ifdef ARDUINO
 #include <Arduino.h>
@@ -6,6 +7,15 @@
 #include <algorithm>
 #include <cmath>
 #endif
+
+// Calibration variables required by transmitter logic
+// Use default values for receiver-side calculations
+int16_t xMin = 0;
+int16_t xMax = MAX_ADC_VALUE;
+int16_t yMin = 0;
+int16_t yMax = MAX_ADC_VALUE;
+uint16_t xCenter = JOYSTICK_CENTER;
+uint16_t yCenter = JOYSTICK_CENTER;
 
 // For native builds, define constrain if not available
 #ifndef ARDUINO
@@ -151,40 +161,39 @@ int slewRateLimit(int current, int target, float deflection, unsigned long now, 
     return next;
 }
 
-/// @brief Computes the motor targets based on joystick input and previous motor targets.
+/// @brief Computes the motor targets using transmitter-calculated percentages for clean differential steering
 /// @param js The joystick processing result.
 /// @param prevMt The previous MotorTargets struct (for previous output values).
 /// @return The computed motor targets.
 /// @remarks
-/// Forward/backward is controlled by rawY, Left/Right is controlled by rawX
-/// The mixing formula is standard for differential drive (tank drive)
+/// Uses transmitter's calculateThrottlePercent and calculateLeftRightPercent directly,
+/// then applies simple differential steering math for predictable behavior
 MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const MotorTargets &prevMt)
 {
-    // DEBUG: Print all relevant values for test diagnosis
-    // printf("[computeMotorTargets] rawX=%d rawY=%d | centeredX=%d centeredY=%d\n", js.rawX, js.rawY, js.rawX - JOYSTICK_CENTER, js.rawY - JOYSTICK_CENTER);
-
     MotorTargets mt = {};
     int nextLeft = prevMt.outputLeft;
     int nextRight = prevMt.outputRight;
     static unsigned long lastSlewUpdateLeft = 0;
     static unsigned long lastSlewUpdateRight = 0;
-
     unsigned long now = millis();
 
-    // If the joystick is within the deadzone, stop the motors
+    // Get transmitter's calculated percentages (-100 to +100)
+    int throttlePercent = calculateThrottlePercent(js.rawY);
+    int lrPercent = calculateLeftRightPercent(js.rawX);
+    
+    // Handle center/deadzone case first - use raw joystick values for consistency with existing tests
     bool joystickCentered = (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE);
-    if (joystickCentered)
+    if (joystickCentered || (throttlePercent == 0 && lrPercent == 0))
     {
         mt.targetLeft = 0;
         mt.targetRight = 0;
         mt.skipSlewRate = false;
         
-        // Only apply dynamic braking once when transitioning to stop, not if already braking
+        // Dynamic braking logic
         mt.brakingApplied = !prevMt.brakingApplied && shouldApplyBraking(prevMt.outputLeft, prevMt.outputRight, 0, 0);
         
         if (mt.brakingApplied)
         {
-            // Set both targets and outputs for dynamic braking
             int leftBrakeDirection = (prevMt.outputLeft > 0) ? 1 : -1;
             int rightBrakeDirection = (prevMt.outputRight > 0) ? 1 : -1;
             mt.targetLeft = -MIN_MOTOR_SPEED * leftBrakeDirection;
@@ -194,7 +203,6 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         }
         else
         {
-            // Slew rate limit toward zero
             if (nextLeft != 0)
                 nextLeft = slewRateLimit(nextLeft, 0, 0.0f, now, lastSlewUpdateLeft);
             if (nextRight != 0)
@@ -202,32 +210,25 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
             mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         }
-
-        // printf("[computeMotorTargets - withinDeadzone] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-
         return mt;
     }
 
-    static const float JOYSTICK_DEADZONE_RATIO = (float)JOYSTICK_DEADZONE / (float)JOYSTICK_CENTER;
-
-    // In-place turn: prioritize joystick intent (large X, Y near center) rather than prior wheel motion.
-    // Regression fix: previously small residual reverse output prevented entering turn, causing unintended reverse.
-    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && fabs(js.steppedRatioLR) >= FULL_TURN_THRESHOLD)
+    // Pure in-place turn: throttle near zero, high L/R deflection (use raw values for compatibility)
+    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && abs(lrPercent) >= 80)
     {
         int base_sp = MIN_MOTOR_SPEED + 1;
-        float offset_half = LR_OFFSET / 2.0f;
-        if (js.steppedRatioLR < 0)
+        if (lrPercent < 0) // Left turn (negative LR)
         {
-            mt.targetLeft = -base_sp + offset_half;
-            mt.targetRight = base_sp - offset_half;
+            mt.targetLeft = base_sp;
+            mt.targetRight = -base_sp;
         }
-        else if (js.steppedRatioLR > 0)
+        else // Right turn (positive LR)
         {
-            mt.targetLeft = base_sp + offset_half;
-            mt.targetRight = -base_sp - offset_half;
+            mt.targetLeft = -base_sp;
+            mt.targetRight = base_sp;
         }
-        mt.skipSlewRate = (fabs(js.steppedRatioLR) >= 0.90f);
-        // Slew rate logic
+        mt.skipSlewRate = (abs(lrPercent) >= 90);
+        
         if (mt.skipSlewRate) {
             nextLeft = mt.targetLeft;
             nextRight = mt.targetRight;
@@ -237,155 +238,102 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             if (nextRight != mt.targetRight)
                 nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f, now, lastSlewUpdateRight);
         }
+        
         mt.brakingApplied = false;
         mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
         mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
-
-        // printf("[computeMotorTargets - inPlaceTurn] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-
         return mt;
     }
 
-    // Forward/backward scaling - using raw Y values
-    int sp = 0;
+    // Standard differential steering: base speed ± turn adjustment
+    // Handle edge case: if transmitter says 0% but we're outside raw deadzone, use minimal movement
+    int baseSpeed = 0;
+    if (throttlePercent > 0) {
+        baseSpeed = map(throttlePercent, 1, 100, MIN_MOTOR_SPEED, MAX_SPEED);
+    } else if (throttlePercent < 0) {
+        baseSpeed = map(throttlePercent, -100, -1, -MAX_SPEED, -MIN_MOTOR_SPEED);
+    } else if (throttlePercent == 0 && abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+        // Edge of deadzone: minimal movement in detected direction
+        if (js.rawY > JOYSTICK_CENTER) {
+            baseSpeed = MIN_MOTOR_SPEED;
+        } else if (js.rawY < JOYSTICK_CENTER) {
+            baseSpeed = -MIN_MOTOR_SPEED;
+        }
+    }
+    
+    // Turn adjustment: reduce one wheel relative to the other
+    int turnAdjustment = 0;
+    if (lrPercent != 0) {
+        // Calculate turn intensity (0.0 to 1.0)
+        float turnIntensity = abs(lrPercent) / 100.0f;
+        // Turn adjustment scales with base speed and turn intensity
+        turnAdjustment = (int)(abs(baseSpeed) * turnIntensity);
+    } else if (lrPercent == 0 && abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+        // Edge of deadzone turning: minimal turn adjustment
+        float rawTurnIntensity = abs(js.rawX - JOYSTICK_CENTER) / (float)JOYSTICK_CENTER;
+        turnAdjustment = max((int)(abs(baseSpeed) * rawTurnIntensity * 0.3f), MIN_MOTOR_SPEED / 2); // Ensure some movement
+    }
+    
+    // Handle edge cases where we're outside deadzone but transmitter gives 0%
+    bool outsideDeadzone = (abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE || abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE);
+    
+    if (outsideDeadzone && baseSpeed == 0 && turnAdjustment == 0) {
+        // Force minimal movement for edge of deadzone
+        if (abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+            baseSpeed = (js.rawY > JOYSTICK_CENTER) ? MIN_MOTOR_SPEED : -MIN_MOTOR_SPEED;
+        }
+        if (abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+            turnAdjustment = MIN_MOTOR_SPEED / 2;
+        }
+    }
+    
+    if (lrPercent < 0 || (lrPercent == 0 && js.rawX < JOYSTICK_CENTER - JOYSTICK_DEADZONE)) { // Left turn (negative LR)
+        mt.targetLeft = baseSpeed;
+        mt.targetRight = baseSpeed - turnAdjustment;
+        // For forward diagonal movement, ensure both wheels stay positive
+        if (baseSpeed > 0 && mt.targetRight <= 0) {
+            mt.targetRight = MIN_MOTOR_SPEED;
+        }
+    } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > JOYSTICK_CENTER + JOYSTICK_DEADZONE)) { // Right turn (positive LR)  
+        mt.targetLeft = baseSpeed - turnAdjustment;
+        mt.targetRight = baseSpeed;
+        // For forward diagonal movement, ensure both wheels stay positive
+        if (baseSpeed > 0 && mt.targetLeft <= 0) {
+            mt.targetLeft = MIN_MOTOR_SPEED;
+        }
+    } else { // Straight
+        mt.targetLeft = baseSpeed;
+        mt.targetRight = baseSpeed;
+    }
+    
+    // Apply LR_OFFSET balance
     float offset_half = LR_OFFSET / 2.0f;
-    if (js.rawY > FORWARD_THRESHOLD)
-    {
-        sp = map(constrain(js.rawY, FORWARD_THRESHOLD, MAX_ADC_VALUE), FORWARD_THRESHOLD, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
-        mt.targetLeft = sp;
-        mt.targetRight = sp;
-        mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
-        
-        // Calculate deflection for variable slew rate (how far from center toward max)
-        float deflection = (float)(js.rawY - FORWARD_THRESHOLD) / (float)(MAX_ADC_VALUE - FORWARD_THRESHOLD);
-        
-        if (mt.skipSlewRate) {
-            nextLeft = mt.targetLeft;
-            nextRight = mt.targetRight;
-        } else {
-            if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection, now, lastSlewUpdateLeft);
-            if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection, now, lastSlewUpdateRight);
-        }
-        mt.brakingApplied = false;
-        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
-        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
-
-        // printf("[computeMotorTargets - forwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-
-        // return mt;
-    }
-    else if (js.rawY < BACKWARD_THRESHOLD)
-    {
-        sp = map(constrain(js.rawY, 0, BACKWARD_THRESHOLD), 0, BACKWARD_THRESHOLD, -MAX_SPEED, -MIN_MOTOR_SPEED);
-        mt.targetLeft = sp;
-        mt.targetRight = sp;
-        mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
-        
-        // Calculate deflection for variable slew rate (how far from center toward min)  
-        float deflection = (float)(BACKWARD_THRESHOLD - js.rawY) / (float)(BACKWARD_THRESHOLD - 0);
-        
-        if (mt.skipSlewRate) {
-            nextLeft = mt.targetLeft;
-            nextRight = mt.targetRight;
-        } else {
-            if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection, now, lastSlewUpdateLeft);
-            if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, deflection, now, lastSlewUpdateRight);
-        }
-        mt.brakingApplied = false;
-        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
-        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
-
-        // printf("[computeMotorTargets - backwards] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-
-        // return mt; 
+    if ((mt.targetLeft > 0 && mt.targetRight > 0) || (mt.targetLeft < 0 && mt.targetRight < 0)) {
+        mt.targetLeft += (mt.targetLeft > 0) ? -offset_half : offset_half;
+        mt.targetRight += (mt.targetRight > 0) ? offset_half : -offset_half;
     }
 
-    // Fix max diagonal logic to ensure motor speeds reach the expected range
-    if (js.rawX == MAX_ADC_VALUE && js.rawY == MAX_ADC_VALUE) {
-        mt.targetLeft = MAX_SPEED;
-        mt.targetRight = MAX_SPEED;
-    }
+    // Clamp to valid motor ranges
+    mt.targetLeft = constrain(mt.targetLeft, -MAX_SPEED, MAX_SPEED);
+    mt.targetRight = constrain(mt.targetRight, -MAX_SPEED, MAX_SPEED);
 
-    // Fix partial forward-right logic to ensure both wheels move
-    if (js.rawX > JOYSTICK_CENTER && js.rawY > JOYSTICK_CENTER) {
-        mt.targetLeft = map(js.rawY, JOYSTICK_CENTER, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
-        mt.targetRight = map(js.rawX, JOYSTICK_CENTER, MAX_ADC_VALUE, MIN_MOTOR_SPEED, MAX_SPEED);
-    }
-
-    // Default: simple tank mixing (convert to centered values for mixing)
-    // If X deflection is within deadzone, skip mixing and return straight values
-    if (fabs(js.rawRatioLR) >= JOYSTICK_DEADZONE_RATIO) {
-
-        // printf("[computeMotorTargets - skip mixing] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-        
-        int centeredY = js.rawY - JOYSTICK_CENTER;
-        int centeredX = js.rawX - JOYSTICK_CENTER;
-        int turn = centeredX / 2;
-        int left = centeredY + centeredX + turn;
-        int right = centeredY - centeredX - turn;
-        // If both axes are in the top-right quadrant, ensure both wheels move forward
-        if (js.rawX > JOYSTICK_CENTER && js.rawY > JOYSTICK_CENTER) {
-            left = constrain(left, MIN_MOTOR_SPEED, MAX_SPEED);
-            right = constrain(right, MIN_MOTOR_SPEED, MAX_SPEED);
-        } else if (js.rawX > JOYSTICK_CENTER && js.rawY < JOYSTICK_CENTER) {
-            // Partial backward + slight right: left wheel must move backward
-            left = constrain(left, -MAX_SPEED, -MIN_MOTOR_SPEED);
-            right = constrain(right, -MAX_SPEED, MAX_SPEED);
-        } else if (js.rawX < JOYSTICK_CENTER && js.rawY < JOYSTICK_CENTER) {
-            // Partial backward + slight left: right wheel must move backward
-            left = constrain(left, -MAX_SPEED, MAX_SPEED);
-            right = constrain(right, -MAX_SPEED, -MIN_MOTOR_SPEED);
-        } else {
-            left = constrain(left, -MAX_SPEED, MAX_SPEED);
-            right = constrain(right, -MAX_SPEED, MAX_SPEED);
-        }
-
-        mt.targetLeft = left;
-        mt.targetRight = right;
-    }
-
-
-    // Apply LR_OFFSET as L/R balance if moving in same direction
-    if ((mt.targetLeft > 0 && mt.targetRight > 0))
-    {
-        mt.targetLeft -= offset_half;
-        mt.targetRight += offset_half;
-    }
-    else if ((mt.targetLeft < 0 && mt.targetRight < 0))
-    {
-        mt.targetLeft += offset_half;
-        mt.targetRight -= offset_half;
-    }
-
-    // printf("[DEBUG pre-clamp] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-
-    const unsigned long SLEW_UPDATE_INTERVAL = 20; // ms
-    static unsigned long lastSlewUpdate = 0;
-
+    // Slew rate control
+    float deflection = max(abs(throttlePercent), abs(lrPercent)) / 100.0f;
     mt.skipSlewRate = shouldSkipSlewRate(prevMt.outputLeft, prevMt.outputRight, mt.targetLeft, mt.targetRight);
+    
     if (mt.skipSlewRate) {
         nextLeft = mt.targetLeft;
         nextRight = mt.targetRight;
-    } 
-    else if (now - lastSlewUpdate < SLEW_UPDATE_INTERVAL) {
-        nextLeft = prevMt.outputLeft;
-        nextRight = prevMt.outputRight;
-    } 
-    else {
-            if (nextLeft != mt.targetLeft)
-                nextLeft = slewRateLimit(nextLeft, mt.targetLeft, 0.0f, now, lastSlewUpdateLeft);
-            if (nextRight != mt.targetRight)
-                nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f, now, lastSlewUpdateRight);
+    } else {
+        if (nextLeft != mt.targetLeft)
+            nextLeft = slewRateLimit(nextLeft, mt.targetLeft, deflection, now, lastSlewUpdateLeft);
+        if (nextRight != mt.targetRight)
+            nextRight = slewRateLimit(nextRight, mt.targetRight, deflection, now, lastSlewUpdateRight);
     }
 
     mt.brakingApplied = false;
-    // If either wheel is above MIN_MOTOR_SPEED, force both to at least MIN_MOTOR_SPEED (with correct sign)
-    // Clamp each wheel independently: only move if above threshold
-    // Always move at least MIN_MOTOR_SPEED in the expected direction if outside deadzone
+    
+    // Apply minimum speed thresholds
     if (nextLeft > 0 && nextLeft < MIN_MOTOR_SPEED)
         mt.outputLeft = MIN_MOTOR_SPEED;
     else if (nextLeft < 0 && nextLeft > -MIN_MOTOR_SPEED)
@@ -403,9 +351,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.outputRight = nextRight;
     else
         mt.outputRight = 0;
-
-    // printf("[computeMotorTargets] tL=%d tR=%d nL=%d nR=%d oL=%d oR=%d\n", mt.targetLeft, mt.targetRight, nextLeft, nextRight, mt.outputLeft, mt.outputRight);
-    
+        
     return mt;
 }
 

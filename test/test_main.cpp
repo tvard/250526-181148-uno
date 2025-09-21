@@ -675,6 +675,55 @@ void test_regression_full_turn_after_reverse(void)
   TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft < 0 && mt.outputRight > 0, "Full left turn should yield opposite signs");
 }
 
+// Test transmitter-driven approach: diagonal movement should produce forward motion with gentle turn
+void test_diagonal_movement_transmitter_driven(void)
+{
+  // Top-right diagonal: should produce forward movement with gentle right turn (10-30 degree angle)
+  // X=1013, Y=585 from user's log represents ~100% throttle, +100% L/R ratio
+  js = processJoystick(1013, 585, false);
+  mt = computeMotorTargets(js, mt);
+  
+  // Check what percentages the transmitter would calculate
+  int throttlePercent = calculateThrottlePercent(585);
+  int lrPercent = calculateLeftRightPercent(1013);
+  
+  // Both wheels should be positive (forward), but left wheel should be higher (right turn)
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft > 0 && mt.outputRight > 0, "Diagonal top-right should produce forward motion on both wheels");
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft > mt.outputRight, "Right turn: left wheel should be faster than right wheel");
+  
+  // The speed difference should be moderate (not extreme turn)
+  // With high throttle and high turn, we expect significant but not complete differential
+  if (mt.outputLeft > 0 && mt.outputRight > 0) {
+    float speedRatio = (float)mt.outputRight / (float)mt.outputLeft;
+    TEST_ASSERT_TRUE_MESSAGE(speedRatio >= 0.1f && speedRatio <= 0.9f, "Speed ratio should indicate turn behavior");
+  }
+  
+  // Top-left diagonal: should produce forward movement with gentle left turn
+  js = processJoystick(13, 585, false); // Low X (left), high Y (forward)
+  mt = computeMotorTargets(js, mt);
+  
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft > 0 && mt.outputRight > 0, "Diagonal top-left should produce forward motion on both wheels");
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputRight > mt.outputLeft, "Left turn: right wheel should be faster than left wheel");
+}
+
+// Test pure forward/backward with transmitter percentages
+void test_transmitter_pure_directions(void)
+{
+  // Pure forward: should produce equal speeds on both wheels
+  js = processJoystick(JOYSTICK_CENTER, 900, false); // High Y, centered X
+  mt = computeMotorTargets(js, mt);
+  
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft > 0 && mt.outputRight > 0, "Pure forward should produce positive speeds");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(10, mt.outputLeft, mt.outputRight, "Pure forward should produce nearly equal wheel speeds");
+  
+  // Pure reverse: should produce equal negative speeds on both wheels
+  js = processJoystick(JOYSTICK_CENTER, 100, false); // Low Y, centered X
+  mt = computeMotorTargets(js, mt);
+  
+  TEST_ASSERT_TRUE_MESSAGE(mt.outputLeft < 0 && mt.outputRight < 0, "Pure reverse should produce negative speeds");
+  TEST_ASSERT_INT_WITHIN_MESSAGE(10, abs(mt.outputLeft), abs(mt.outputRight), "Pure reverse should produce nearly equal wheel speeds");
+}
+
 
 // ----------------------------- Tests: Config constants -----------------------
 void test_configuration_constants(void)
@@ -901,6 +950,8 @@ int main(void)
   
   // Regression: ensure full turn engages even after residual reverse
   extern void test_regression_full_turn_after_reverse();
+  extern void test_diagonal_movement_transmitter_driven();
+  extern void test_transmitter_pure_directions();
   
 
   // motor targets function tests
@@ -959,6 +1010,8 @@ int main(void)
   // Regression: partial forward + backwards should move both wheels
   RUN_TEST(test_partial_forward_backwards_both_wheels_move);
   RUN_TEST(test_regression_full_turn_after_reverse);
+  RUN_TEST(test_diagonal_movement_transmitter_driven);
+  RUN_TEST(test_transmitter_pure_directions);
 
   return UNITY_END();
 }
