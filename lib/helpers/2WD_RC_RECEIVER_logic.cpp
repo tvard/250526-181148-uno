@@ -271,18 +271,30 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             baseSpeed = -MIN_MOTOR_SPEED;
         }
     }
-    
-    // Turn adjustment: reduce one wheel relative to the other
+
+    /**
+     * turnAdjustment determines how much one wheel's speed is reduced relative to the other to achieve turning.
+     * - For normal steering, turnAdjustment is proportional to both the base speed and the left/right joystick deflection (turnIntensity).
+     * - turnScale is adaptive: higher at low speeds for more responsive turning, lower at high speeds for stability.
+     * - For edge cases (when lrPercent is zero but rawX is outside the deadzone), a minimal turnAdjustment is applied to ensure some movement.
+     * - The calculation ensures smooth transitions between straight driving, gentle arcs, and sharp turns.
+     */
     int turnAdjustment = 0;
     if (lrPercent != 0) {
         // Calculate turn intensity (0.0 to 1.0)
         float turnIntensity = abs(lrPercent) / 100.0f;
-        // Fix: reduce turn adjustment scaling for gentle arcs
-        turnAdjustment = (int)(abs(baseSpeed) * turnIntensity * 0.3f);
+        // Adaptive scaling for turn adjustment: more responsive at low speed, less at high speed
+        float turnScale = TURN_INTENSITY_FACTOR; // Default value; can be tuned or made adaptive
+        if (abs(baseSpeed) < 100) {
+            turnScale = TURN_INTENSITY_FACTOR + 0.2f; // More responsive at low speed
+        } else if (abs(baseSpeed) > 200) {
+            turnScale = TURN_INTENSITY_FACTOR - 0.2f; // Less responsive at high speed
+        }
+        turnAdjustment = (int)(abs(baseSpeed) * turnIntensity * turnScale);
     } else if (lrPercent == 0 && abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
-        // Edge of deadzone turning: minimal turn adjustment
+        // Edge of deadzone turning: minimal turn adjustment for gentle steering
         float rawTurnIntensity = abs(js.rawX - JOYSTICK_CENTER) / (float)JOYSTICK_CENTER;
-        turnAdjustment = max((int)(abs(baseSpeed) * rawTurnIntensity * 0.3f), MIN_MOTOR_SPEED / 2); // Ensure some movement
+        turnAdjustment = max((int)(abs(baseSpeed) * rawTurnIntensity * TURN_INTENSITY_FACTOR), MIN_MOTOR_SPEED / 2); // Ensure some movement
     }
     
     // Handle edge cases where we're outside deadzone but transmitter gives 0%
@@ -298,18 +310,33 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         }
     }
     
-    // Fix: swap left/right logic for user's transmitter convention
     if (lrPercent < 0 || (lrPercent == 0 && js.rawX < JOYSTICK_CENTER - JOYSTICK_DEADZONE)) { // Left turn (negative LR)
-        mt.targetLeft = baseSpeed;
-        mt.targetRight = baseSpeed - turnAdjustment;
-        if (baseSpeed > 0 && mt.targetRight <= 0) {
-            mt.targetRight = MIN_MOTOR_SPEED;
+        if (baseSpeed >= 0) {
+            mt.targetLeft = baseSpeed - turnAdjustment;
+            mt.targetRight = baseSpeed;
+            if (baseSpeed > 0 && mt.targetRight <= 0) {
+                mt.targetRight = MIN_MOTOR_SPEED;
+            }
+        } else {
+            mt.targetLeft = baseSpeed + turnAdjustment;
+            mt.targetRight = baseSpeed;
+            if (baseSpeed < 0 && mt.targetRight >= 0) {
+                mt.targetRight = -MIN_MOTOR_SPEED;
+            }
         }
     } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > JOYSTICK_CENTER + JOYSTICK_DEADZONE)) { // Right turn (positive LR)
-        mt.targetLeft = baseSpeed - turnAdjustment;
-        mt.targetRight = baseSpeed;
-        if (baseSpeed > 0 && mt.targetLeft <= 0) {
-            mt.targetLeft = MIN_MOTOR_SPEED;
+        if (baseSpeed >= 0) {
+            mt.targetLeft = baseSpeed;
+            mt.targetRight = baseSpeed - turnAdjustment;
+            if (baseSpeed > 0 && mt.targetLeft <= 0) {
+                mt.targetLeft = MIN_MOTOR_SPEED;
+            }
+        } else {
+            mt.targetLeft = baseSpeed;
+            mt.targetRight = baseSpeed + turnAdjustment;
+            if (baseSpeed < 0 && mt.targetLeft >= 0) {
+                mt.targetLeft = -MIN_MOTOR_SPEED;
+            }
         }
     } else { // Straight
         mt.targetLeft = baseSpeed;
