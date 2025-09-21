@@ -197,16 +197,16 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         mt.skipSlewRate = false;
         
         // Dynamic braking logic
-        mt.brakingApplied = !prevMt.brakingApplied && shouldApplyBraking(prevMt.outputLeft, prevMt.outputRight, 0, 0);
+        mt.brakingApplied = shouldApplyBraking(prevMt.outputLeft, prevMt.outputRight, 0, 0);
         
         if (mt.brakingApplied)
         {
             int leftBrakeDirection = (prevMt.outputLeft > 0) ? 1 : -1;
             int rightBrakeDirection = (prevMt.outputRight > 0) ? 1 : -1;
-            mt.targetLeft = -MIN_MOTOR_SPEED * leftBrakeDirection;
-            mt.targetRight = -MIN_MOTOR_SPEED * rightBrakeDirection;
-            mt.outputLeft = mt.targetLeft;
-            mt.outputRight = mt.targetRight;
+            mt.targetLeft = 0;
+            mt.targetRight = 0;
+            mt.outputLeft = -MIN_MOTOR_SPEED * leftBrakeDirection;
+            mt.outputRight = -MIN_MOTOR_SPEED * rightBrakeDirection;
         }
         else
         {
