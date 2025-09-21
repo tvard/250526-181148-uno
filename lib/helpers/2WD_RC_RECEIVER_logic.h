@@ -6,8 +6,8 @@ const int MIN_MOTOR_SPEED  = 60;    // minimum speed to avoid stalling, can be a
 const int MOTOR_DEADZONE   = 10;    // motor values within this range of zero are considered stopped
 
 // Receiver-specific drive/motor logic constants
-const int RAMP_STEP_SLOW = 03;      // slow slew rate step (for gentle joystick deflection)
-const int RAMP_STEP_FAST = 60;      // fast slew rate step (for aggressive joystick deflection)
+const int RAMP_STEP_SLOW = 01;      // slow slew rate step (for gentle joystick deflection)
+const int RAMP_STEP_FAST = 10;      // fast slew rate step (for aggressive joystick deflection)
 
 #pragma once
 
@@ -26,5 +26,5 @@ JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joys
 const int FORWARD_THRESHOLD = JOYSTICK_CENTER + JOYSTICK_DEADZONE;  // threshold to start forward movement
 const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // threshold to start backward movement
 const float FULL_TURN_THRESHOLD = 0.80f;                 // threshold (as a percentage of max X deflection) for full in-place turn
-const float FULL_THROTTLE_THRESHOLD = 0.80f;             // threshold (as a percentage of max Y deflection) for full forward/backward speed
+const float FULL_THROTTLE_THRESHOLD = 0.90f;             // threshold (as a percentage of max Y deflection) for full forward/backward speed
 const float BRAKE_APPLY_THRESHOLD = 0.20f * MAX_SPEED;   // Minimum speed to apply braking when stopping

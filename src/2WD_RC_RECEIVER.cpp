@@ -314,9 +314,30 @@ float getSuccessRate()
 // Motor control functions  
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
-  // if (Serial) {
-  //   return; // Disable motors if Serial is active (for safety during debugging)
-  // }
+    // Handshake: disable motors if a character is received from serial monitor
+    static bool motorsDisabledBySerial = false;
+  #ifdef ARDUINO
+    if (Serial && Serial.available()) {
+      char c = Serial.read(); // Read the character from serial monitor
+      if (c == 'D') {         // 'D' to disable motors (must be uppercase)
+        motorsDisabledBySerial = true;
+        Serial.println("Motors disabled by serial monitor handshake.");
+      }
+      if (c == 'E') {         // 'E' to re-enable motors (must be uppercase)
+        motorsDisabledBySerial = false;
+        Serial.println("Motors re-enabled.");
+      }
+    }
+    if (motorsDisabledBySerial) {
+      return;
+    }
+  #endif
+  //   // Early exit if serial monitoring is active (for safety during debugging)
+  // #ifdef ARDUINO
+  //   if (Serial && Serial.available()) {
+  //     return;
+  //   }
+  // #endif
 
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
@@ -463,13 +484,13 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   // Motor speeds
   // use global lastOutputLeft, lastOutputRight
   Serial.print(" | Motors L:");
-  Serial.print(pad3s(mt.targetLeft));
+  Serial.print(pad4s(mt.targetLeft));
   Serial.print(" R:");
-  Serial.print(pad3s(mt.targetRight));
+  Serial.print(pad4s(mt.targetRight));
   Serial.print(" OutL:");
-  Serial.print(pad3s(mt.outputLeft));
+  Serial.print(pad4s(mt.outputLeft));
   Serial.print(" OutR:");
-  Serial.print(pad3s(mt.outputRight));
+  Serial.print(pad4s(mt.outputRight));
   Serial.print(" |");
   Serial.print(mt.skipSlewRate ? "     " : " Slew");
   Serial.print(mt.brakingApplied ? " Braking" : "        ");

@@ -81,7 +81,7 @@ struct
 // Variable slew rate: pass in joystick deflection (0.0-1.0) to select slew rate
 int slewRateLimit(int current, int target, float deflection, unsigned long now, unsigned long& lastSlewUpdate)
 {
-    const unsigned long SLEW_UPDATE_INTERVAL = 20; // ms
+    const unsigned long SLEW_UPDATE_INTERVAL = 50; // ms
     if (now - lastSlewUpdate < SLEW_UPDATE_INTERVAL)
         return current;
     lastSlewUpdate = now;
@@ -110,7 +110,7 @@ int slewRateLimit(int current, int target, float deflection, unsigned long now, 
     if (current == 0 && next > 0)
         next = MIN_MOTOR_SPEED;
     else if (current == 0 && next < 0)
-        next = -MIN_MOTOR_SPEED;
+        next = (abs(target) >= MIN_MOTOR_SPEED) ? target : -MIN_MOTOR_SPEED;
 
     // 3. Special case: when target is 0 and current > MIN_MOTOR_SPEED, clamp directly to 0 
     if (target == 0 && current > MIN_MOTOR_SPEED)
@@ -214,18 +214,18 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     }
 
     // Pure in-place turn: throttle near zero, high L/R deflection (use raw values for compatibility)
-    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && abs(lrPercent) >= 80)
+    if (abs(js.rawY - JOYSTICK_CENTER) <= JOYSTICK_DEADZONE && abs(lrPercent) >= 25 && abs(throttlePercent) < 40)
     {
         int base_sp = MIN_MOTOR_SPEED + 1;
         if (lrPercent < 0) // Left turn (negative LR)
         {
-            mt.targetLeft = base_sp;
-            mt.targetRight = -base_sp;
+            mt.targetLeft = -base_sp;
+            mt.targetRight = base_sp;
         }
         else // Right turn (positive LR)
         {
-            mt.targetLeft = -base_sp;
-            mt.targetRight = base_sp;
+            mt.targetLeft = base_sp;
+            mt.targetRight = -base_sp;
         }
         mt.skipSlewRate = (abs(lrPercent) >= 90);
         
@@ -251,7 +251,11 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     if (throttlePercent > 0) {
         baseSpeed = map(throttlePercent, 1, 100, MIN_MOTOR_SPEED, MAX_SPEED);
     } else if (throttlePercent < 0) {
+        // Fix: ensure full reverse uses full range
         baseSpeed = map(throttlePercent, -100, -1, -MAX_SPEED, -MIN_MOTOR_SPEED);
+        if (throttlePercent == -100) baseSpeed = -MAX_SPEED;
+        // Remove any capping at -25
+        if (baseSpeed > -MIN_MOTOR_SPEED && baseSpeed < 0) baseSpeed = -MIN_MOTOR_SPEED;
     } else if (throttlePercent == 0 && abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
         // Edge of deadzone: minimal movement in detected direction
         if (js.rawY > JOYSTICK_CENTER) {
@@ -266,8 +270,8 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     if (lrPercent != 0) {
         // Calculate turn intensity (0.0 to 1.0)
         float turnIntensity = abs(lrPercent) / 100.0f;
-        // Turn adjustment scales with base speed and turn intensity
-        turnAdjustment = (int)(abs(baseSpeed) * turnIntensity);
+        // Fix: reduce turn adjustment scaling for gentle arcs
+        turnAdjustment = (int)(abs(baseSpeed) * turnIntensity * 0.3f);
     } else if (lrPercent == 0 && abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
         // Edge of deadzone turning: minimal turn adjustment
         float rawTurnIntensity = abs(js.rawX - JOYSTICK_CENTER) / (float)JOYSTICK_CENTER;
@@ -287,17 +291,16 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         }
     }
     
+    // Fix: swap left/right logic for user's transmitter convention
     if (lrPercent < 0 || (lrPercent == 0 && js.rawX < JOYSTICK_CENTER - JOYSTICK_DEADZONE)) { // Left turn (negative LR)
         mt.targetLeft = baseSpeed;
         mt.targetRight = baseSpeed - turnAdjustment;
-        // For forward diagonal movement, ensure both wheels stay positive
         if (baseSpeed > 0 && mt.targetRight <= 0) {
             mt.targetRight = MIN_MOTOR_SPEED;
         }
-    } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > JOYSTICK_CENTER + JOYSTICK_DEADZONE)) { // Right turn (positive LR)  
+    } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > JOYSTICK_CENTER + JOYSTICK_DEADZONE)) { // Right turn (positive LR)
         mt.targetLeft = baseSpeed - turnAdjustment;
         mt.targetRight = baseSpeed;
-        // For forward diagonal movement, ensure both wheels stay positive
         if (baseSpeed > 0 && mt.targetLeft <= 0) {
             mt.targetLeft = MIN_MOTOR_SPEED;
         }
