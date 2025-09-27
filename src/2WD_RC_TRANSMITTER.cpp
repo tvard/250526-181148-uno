@@ -61,7 +61,7 @@ void initRadio();
 uint8_t calculateChecksum(const JoystickData& data);
 void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float rxVoltage, float txSuccessRate, float rxSuccessRate);
 void drawRssi(float successRate, int barX, int barY, bool showLabel, const char* suffix, int offsetX);
-void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, bool showLabel, const char* suffix, int offsetX);
+void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, float minVoltage, bool showLabel, const char* suffix, int offsetX);
 void drawThrottle(int x, int y, int barX, int barY, int offsetX);
 void drawLeftRightBar(int x, int y, int barX, int barY, int offsetX);
 
@@ -172,10 +172,7 @@ void initDisplay() {
       display->display();
     } else {
       Serial.println("Display allocation failed");
-      if (display) {
-        delete display;
-        display = nullptr;
-      }
+        // Do not delete display; Adafruit_SSD1306 does not have a virtual destructor and is not meant to be deleted polymorphically.
     }
   } else {
     Serial.print("Insufficient memory for display: ");
@@ -195,11 +192,11 @@ void initRadio() {
     radio->setDataRate(RF24_250KBPS);
     radio->setPALevel(RF24_PA_HIGH);
     radio->setPayloadSize(sizeof(JoystickData));
-    radio->setAutoAck(true);                // Re-enable ACK
-    radio->enableAckPayload();              // Enable ACK payloads
-    radio->setRetries(5, 5);                // Restore retries
-    radio->openWritingPipe(addresses[0]);    // Write on address "00001"
-    radio->openReadingPipe(0, addresses[1]); // Listen on address "00002"
+    radio->setAutoAck(true);                  // Re-enable ACK
+    radio->enableAckPayload();                // Enable ACK payloads
+    radio->setRetries(5, 5);                  // Restore retries
+    radio->openReadingPipe(0, addresses[1]);  // Listen on address "00002"
+    radio->openWritingPipe(addresses[0]);     // Write on address "00001"
     radio->startListening();
     Serial.print("Radio configured. Free memory: ");
     Serial.println(freeMemory());
@@ -223,7 +220,6 @@ void loop() {
   static uint32_t lastAckTime = 0;
 
   // Send data continuously if radio is available
-  static bool lastPacketHadAck = true;
   if (radio) {
     JoystickData txData;
     txData.xValue = x;
@@ -242,9 +238,8 @@ void loop() {
       // Validate CRC of received ACK payload
       uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
       if (ackData.crc == expectedCrc) {
-        // Process valid receiver data using shared voltage calibration constants
-        // ackData.voltage is scaled 0-255, convert to actual battery voltage
-        rxVoltage = map(ackData.voltage, 0, 255, 0, (int)(VOLTAGE_CALIBRATION_BATTERY * 100)) / 100.0f;
+        // Use the same formula as the receiver for accurate voltage calculation
+        rxVoltage = ackData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0f;
         rxSuccessRate = (float)ackData.successRate / 255.0f;        // Scale back to 0-1 (fraction)
 
         uint8_t receiverMode = (ackData.status >> 2) & 0x03;
@@ -256,12 +251,10 @@ void loop() {
 
         lastAckTime = millis(); // Update timestamp when we receive valid ACK
         updatePacketHistory(true);
-        lastPacketHadAck = true;
       }
     } else {
       // No ACK received for this packet
       updatePacketHistory(false);
-      lastPacketHadAck = false;
     }
 
     radio->startListening();
@@ -310,6 +303,7 @@ void loop() {
       Serial.print(" (");
       Serial.print(analogRead(VOLTAGE_SENSOR_PIN));
       Serial.print(")"); Serial.print(" | ");
+      Serial.print("RX Voltage: "); Serial.print(rxVoltage); Serial.print(" | ");
 
       Serial.println("");
 
@@ -358,8 +352,8 @@ void displayInfo(uint16_t x, uint16_t y, bool btnPressed, float txVoltage, float
   const int offsetX = 30; // Text prefix width
 
   // Line 1: Battery indicators
-  drawBattery(txVoltage, 0, 1, 28, 4.2f, true, "tx", offsetX);   // Transmitter battery
-  drawBattery(rxVoltage, 75, 1, 28, 12.6f, false, "rx", 0);      // Receiver battery - same size, closer label
+  drawBattery(txVoltage, 0, 1, 28, VBATT_MAX, VBATT_MIN, true, "tx", offsetX);              // Transmitter battery
+  drawBattery(rxVoltage, 75, 1, 28, VBATT_MAX * 3.0f, VBATT_MIN * 3.0f, false, "rx", 0);    // Receiver battery - same size, closer label (3S[n]P config)
 
   // Line 2: RF Quality with signal bars and percentage
   drawRssi(txSuccessRate, 0, 10, true, "tx", offsetX);
@@ -453,11 +447,11 @@ void drawLeftRightBar(int x, int y, int barX, int barY, int offsetX) {
   display->print('%');
 }
 
-void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, bool showLabel, const char* suffix, int offsetX) {
+void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, float minVoltage, bool showLabel, const char* suffix, int offsetX) {
   const int barH = 6;
 
-  const int MIN_VOLTAGE = 280; // 2.8V * 100
   int MAX_VOLTAGE = int(maxVoltage * 100); // maxVoltage in V
+  int MIN_VOLTAGE = int(minVoltage * 100); // minVoltage in V
 
   // Map voltage to bar fill width with proper bounds checking
   int fillW = map(constrain(int(voltage * 100), MIN_VOLTAGE, MAX_VOLTAGE), 

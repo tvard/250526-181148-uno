@@ -15,12 +15,13 @@ const int JOYSTICK_DEADZONE = 20;   // deadzone around center based on joystick 
 // Voltage Divider Constants (shared between transmitter and receiver)
 // Current configuration: R1 = 276K (3 x 92K), R2 = 100K
 // Arduino: 3.3V/8MHz, ADC reference = 3.29V measured
-const float VOLTAGE_ADC_REFERENCE = 3.29f;        // Measured ADC reference voltage (3.3V Arduino)
-const float VOLTAGE_DIVIDER_RATIO = (276.0f + 97.5f) / 97.5f; // ≈ 3.831
-const float VOLTAGE_CALIBRATION_BATTERY = 12.18f; // Actual battery voltage when ADC reads maximum
-const float VOLTAGE_CALIBRATION_ADC_PIN = 3.19f;  // Voltage at ADC pin when battery = 12.19V
-
-
+const float VOLTAGE_CORRECTION_FACTOR = 12.16f / 11.96f;       // Corrector for Vref tolerance (measured 3.29V vs nominal 3.3V)
+const float VOLTAGE_ADC_REFERENCE = 3.3f;        // Measured ADC reference voltage (3.3V Arduino)
+const float VOLTAGE_DIVIDER_RATIO = VOLTAGE_CORRECTION_FACTOR * (276.0f + 97.5f) / 97.5f; // ≈ 3.831
+const float VOLTAGE_CALIBRATION_BATTERY = 12.6f; // Actual battery voltage when ADC reads maximum
+const float VBATT_MIN = 3.0f;               // Minimum battery voltage (per cell)
+const float VBATT_MAX = 4.2f;               // Maximum battery voltage (per cell)
+    
 const int PACKET_HISTORY_SIZE = 32; // Number of packets to track for success rate
 extern uint32_t packetHistory;
 extern uint8_t packetIndex;

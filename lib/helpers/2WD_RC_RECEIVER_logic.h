@@ -18,7 +18,7 @@ const int BACKWARD_THRESHOLD = JOYSTICK_CENTER - JOYSTICK_DEADZONE; // threshold
 const float FULL_TURN_THRESHOLD = 0.80f;                            // threshold (as a percentage of max X deflection) for full in-place turn
 const float FULL_THROTTLE_THRESHOLD = 0.90f;                        // threshold (as a percentage of max Y deflection) for full forward/backward speed
 const float BRAKE_APPLY_THRESHOLD = 1.10f * MIN_MOTOR_SPEED;        // Minimum speed to apply braking when stopping
-const float TURN_INTENSITY_FACTOR = 0.6f;                           // Factor to scale turn intensity based on joystick deflection, lower = less responsive
+const float TURN_INTENSITY_FACTOR = 0.75f;                           // Factor to scale turn intensity based on joystick deflection, lower = less responsive
 
 #pragma once
 
