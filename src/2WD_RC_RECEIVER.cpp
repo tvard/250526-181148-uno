@@ -30,23 +30,19 @@ const byte addresses[][6] = {"00001", "00002"};
 uint32_t packetHistory = 32;
 uint8_t packetIndex = 0;
 
-// Packet structures - MUST MATCH TRANSMITTER EXACTLY
-struct JoystickData {
-  int xValue;         // 16-bit int (matches transmitter)
-  int yValue;         // 16-bit int (matches transmitter)
-  bool buttonPressed; // 8-bit bool (matches transmitter)
-  uint8_t checksum;   // 8-bit checksum (matches transmitter)
-};
-
 // Global objects - dynamic allocation for memory efficiency
 RF24 *radio = nullptr;
-RxData rxData = {0, 0, 0, 0};
+RxData rxData(0, 0, 0, static_cast<RxRequestType>(0), 0);
 MotorTargets prevMotorValues = {0, 0, 0, 0, false, false};
 
 // RF Signal variables
 int joystickX = 512; // Center position (range: 0-1023)
 int joystickY = 512; // Center position (range: 0-1023)
 bool joystickButton = false;
+
+// In 2WD_RC_RECEIVER_logic.cpp
+extern uint16_t xCenter;
+extern uint16_t yCenter;
 
 // Fast slew mode toggle
 bool FAST_SLEW_MODE = false;
@@ -56,6 +52,7 @@ int freeMemory();
 void initRadio();
 void toggleFastSlewOnLongBeep(JoystickProcessingResult &js);
 bool readRFSignals();
+void successBeep();
 void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt);
 uint8_t calculateChecksum(const JoystickData &data);
 uint8_t calculateRxCRC(const RxData &data);
@@ -65,9 +62,11 @@ void stopMotors();
 void beep(int duration);
 void beep(bool isActive);
 bool updateVoltageReading(RxData &rxData);
+bool tryReadCalibrationPacket();
 
 // Entertainer melody functions
-struct EntertainerState {
+struct EntertainerState
+{
   int noteIndex = 0;
   unsigned long phaseStart = 0;
   int phase = 0;
@@ -77,13 +76,15 @@ static EntertainerState entertainerState;
 bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt);
 
 // Free memory utility
-int freeMemory() {
+int freeMemory()
+{
   extern int __heap_start, *__brkval;
   int v;
   return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
 }
 
-void setup() {
+void setup()
+{
   pinMode(VOLTAGE_ADC_PIN, INPUT);
   Serial.begin(9600);
   delay(1000);
@@ -118,33 +119,60 @@ void setup() {
   // Stop all motors initially
   stopMotors();
 
+  // Request calibration on startup  
+  RxData rxData(0, 0, 0, RXREQ_REQUEST_CALIBRATION, 0); // Initial ACK payload
+
+  if (radio) {
+    radio->writeAckPayload(0, &rxData, sizeof(RxData));
+    Serial.println("Initial ACK payload loaded");
+  }
+
+  Serial.println("Attempting to read calibration packet...");
+  if (tryReadCalibrationPacket())
+  {
+    Serial.println("Calibration packet received during setup.");
+    successBeep();
+  }
+  else
+  {
+    Serial.println("No calibration packet received during setup.");
+    Serial.println("Using default calibration values: X Center = " + String(xCenter) + ", Y Center = " + String(yCenter));
+    failBeep();
+  }
+
   Serial.print("Final free memory: ");
   Serial.println(freeMemory());
   Serial.println("Setup complete!");
 }
 
-void initRadio() {
+void initRadio()
+{
   Serial.println("Initializing radio...");
 
   // Allocate radio object dynamically
   radio = new RF24(NRF_CE_PIN, NRF_CSN_PIN);
 
-  if (radio && radio->begin()) {
+  if (radio && radio->begin())
+  {
     Serial.println("NRF24L01 initialized successfully.");
 
-    // Configure radio - MATCH TRANSMITTER EXACTLY
+    // Configure radio - FIXED VERSION
     radio->setChannel(RADIO_CHANNEL);
     radio->setDataRate(RF24_250KBPS);
     radio->setPALevel(RF24_PA_HIGH);
-    radio->setPayloadSize(sizeof(JoystickData));
-    radio->setAutoAck(true);   // Enable ACK
-    radio->enableAckPayload(); // Enable ACK payloads
-    radio->setRetries(5, 5);   // Match transmitter retry settings
+    radio->enableDynamicPayloads();
+    radio->setAutoAck(true);
+    radio->enableAckPayload();
+    radio->setRetries(5, 5);
 
-    // Address configuration - RECEIVER LISTENS ON "00001", RESPONDS ON "00002"
-    radio->openReadingPipe(0, addresses[0]); // Listen on address "00001"
-    radio->openWritingPipe(addresses[1]);    // Write responses on "00002"
+    // FIX: Proper pipe configuration
+    radio->openReadingPipe(0, addresses[0]); // Listen on pipe 0 "00001"
+    radio->openWritingPipe(addresses[1]);    // Not used, but set for consistency
     radio->startListening();
+
+    // Clear any stale data
+    radio->flush_rx();
+    radio->flush_tx();
 
     Serial.print("Channel: ");
     Serial.println(RADIO_CHANNEL);
@@ -155,39 +183,22 @@ void initRadio() {
 
     // Success beeps
     beep(100);
-  } else {
+  }
+  else
+  {
     Serial.println("NRF24L01 failed to initialize!");
     beep(1000); // Error beep
   }
 }
 
-void loop() {
-  uint8_t state = 0;           // 0 = stopped, 1 = forward, 2 = backward, 3 = turning
-  if (prevMotorValues.targetLeft > 0 && prevMotorValues.targetRight > 0)
-    state = 1;
-  else if (prevMotorValues.targetLeft < 0 && prevMotorValues.targetRight < 0)
-    state = 2;
-  else if (prevMotorValues.targetLeft != prevMotorValues.targetRight)
-    state = 3;
-
-  // Pack response data
-  updateVoltageReading(rxData);
-
-  uint8_t mode = 0; // 0 = normal/manual mode (update to add more modes)
-  rxData.status = (mode << 2) | state; // Pack mode and state
-  rxData.crc = calculateRxCRC(rxData);
-  rxData.successRate = (uint8_t)(getSuccessRate() * 255); // Scale to 0-255
-
-  // Pre-load ACK payload for next transmission (ALWAYS do this)
-  if (radio) {
-    radio->writeAckPayload(0, &rxData, sizeof(RxData));
-  }
-
+void loop()
+{
   static int rfLostCounter = 0;
   MotorTargets mt = {};
-  bool isRead = readRFSignals();
+  bool isRead = readRFSignals(); // ACK payload now written inside this function
 
-  if (isRead) {
+  if (isRead)
+  {
     rfLostCounter = 0; // Reset RF lost counter
 
     JoystickProcessingResult js = processJoystick(joystickX, joystickY, joystickButton);
@@ -204,7 +215,9 @@ void loop() {
 
     // Update packet history with successful reception
     updatePacketHistory(true);
-  } else if (rfLostCounter++ * LOOP_DELAY_MS > 440) { // RF signal lost after ~0.5s
+  }
+  else if (rfLostCounter++ * LOOP_DELAY_MS > 440)
+  { // RF signal lost after ~0.5s
     setMotorSpeeds(0, 0);
 
     // Update prevMotorValues to stopped
@@ -213,13 +226,14 @@ void loop() {
     // Update packet history with failure
     updatePacketHistory(false);
 
-    rfLostCounter = 441;  // Prevent overflow
+    rfLostCounter = 441; // Prevent overflow
   }
 
   // Status reporting every n milliseconds
   static unsigned long lastStatusTime = 0;
 
-  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000)) {
+  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000))
+  {
     // Use last computed MotorTargets for status
     printStatusReport(rxData, isRead, mt);
     lastStatusTime = millis();
@@ -252,45 +266,85 @@ void toggleFastSlewOnLongBeep(JoystickProcessingResult &js)
   }
 }
 
+// FIXED readRFSignals() - Move ACK payload writing here
 bool readRFSignals()
 {
-  // static unsigned long lastReceiveTime = 0; // (unused)
   static int consecutiveFailures = 0;
 
   if (radio && radio->available())
   {
     JoystickData receivedData;
+    uint8_t payloadSize = radio->getDynamicPayloadSize();
 
-    // Read the payload
-    radio->read(&receivedData, sizeof(JoystickData));
-
-    // Verify checksum
-    uint8_t calculatedChecksum = calculateChecksum(receivedData);
-    if (receivedData.checksum == calculatedChecksum)
+    if (payloadSize == sizeof(JoystickData))
     {
-      // Valid data received
-      joystickX = receivedData.xValue;
-      joystickY = receivedData.yValue;
-      joystickButton = receivedData.buttonPressed;
+      radio->read(&receivedData, sizeof(JoystickData));
 
-      // lastReceiveTime = millis();
-      consecutiveFailures = 0;
+      // Verify checksum
+      uint8_t calculatedChecksum = calculateChecksum(receivedData);
+      if (receivedData.checksum == calculatedChecksum)
+      {
+        // Valid data received
+        joystickX = receivedData.xValue;
+        joystickY = receivedData.yValue;
+        joystickButton = receivedData.buttonPressed;
+        consecutiveFailures = 0;
 
-      return true;
-    }
-    else
-    {
+        // FIX: Write ACK payload immediately after successful receive
+        updateVoltageReading(rxData);
+        uint8_t state = 0;
+        if (prevMotorValues.targetLeft > 0 && prevMotorValues.targetRight > 0)
+          state = 1;
+        else if (prevMotorValues.targetLeft < 0 && prevMotorValues.targetRight < 0)
+          state = 2;
+        else if (prevMotorValues.targetLeft != prevMotorValues.targetRight)
+          state = 3;
+
+        uint8_t mode = 0;
+        rxData.status = (mode << 2) | state;
+        rxData.crc = calculateRxCRC(rxData);
+        rxData.successRate = (uint8_t)(getSuccessRate() * 255);
+        rxData.request = RXREQ_NONE;
+
+        // Write ACK payload for next transmission
+        radio->writeAckPayload(0, &rxData, sizeof(RxData));
+
+        return true;
+      }
+
       // Checksum mismatch
       if (Serial)
       {
-        Serial.println("");
-        Serial.print("!!! Checksum error: expected ");
-        Serial.print(calculatedChecksum);
-        Serial.print(", received ");
-        Serial.print(receivedData.checksum);
-        Serial.println(" !!! ");
+        Serial.println("Checksum error");
       }
       consecutiveFailures++;
+    }
+    else if (payloadSize == sizeof(CalibrationPacket))
+    {
+      // Handle calibration packet as before
+      CalibrationPacket calib;
+      radio->read(&calib, sizeof(CalibrationPacket));
+      uint8_t expected = calcCalibrationChecksum(calib.xCenter, calib.yCenter);
+      if (calib.checksum == expected &&
+          calib.xCenter <= MAX_ADC_VALUE &&
+          calib.yCenter <= MAX_ADC_VALUE)
+      {
+        xCenter = calib.xCenter;
+        yCenter = calib.yCenter;
+        if (Serial)
+        {
+          Serial.println("Calibration applied");
+        }
+        successBeep();
+      }
+      return false;
+    }
+    else
+    {
+      // Discard unexpected payload
+      uint8_t dummy[32];
+      radio->read(&dummy, payloadSize);
+      return false;
     }
   }
 
@@ -341,39 +395,49 @@ float getSuccessRate()
   return (float)count / PACKET_HISTORY_SIZE;
 }
 
-// Motor control functions  
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
-    // Handshake: disable motors if a character is received from serial monitor
-    static bool motorsDisabledBySerial = false;
-  #ifdef ARDUINO
-    if (Serial && Serial.available()) {
-      char c = Serial.read(); // Read the character from serial monitor
-      if (c == 'D') {         // 'D' to disable motors (must be uppercase)
-        motorsDisabledBySerial = true;
-        Serial.println("Motors disabled by serial monitor handshake.");
-      }
-      if (c == 'E') {         // 'E' to re-enable motors (must be uppercase)
-        motorsDisabledBySerial = false;
-        Serial.println("Motors re-enabled.");
-      }
+  // Handshake: disable motors if a character is received from serial monitor
+  static bool motorsDisabledBySerial = false;
+  
+#ifdef ARDUINO
+  if (Serial && Serial.available())
+  {
+    char c = Serial.read(); // Read the character from serial monitor
+    if (c == 'D')
+    { // 'D' to disable motors (must be uppercase)
+      motorsDisabledBySerial = true;
+      stopMotors();
+      Serial.println("Motors disabled by serial monitor handshake.");
     }
-    if (motorsDisabledBySerial) {
-      return;
+    else if (c == 'E')
+    { // 'E' to re-enable motors (must be uppercase)
+      motorsDisabledBySerial = false;
+      Serial.println("Motors re-enabled.");
     }
-  #endif
-  //   // Early exit if serial monitoring is active (for safety during debugging)
-  // #ifdef ARDUINO
-  //   if (Serial && Serial.available()) {
-  //     return;
-  //   }
-  // #endif
+  }
+  
+  // MOVED OUTSIDE: Check if motors are disabled
+  if (motorsDisabledBySerial)
+  {
+    return;
+  }
+#endif
 
   leftSpeed = constrain(leftSpeed, -MAX_SPEED, MAX_SPEED);
   rightSpeed = constrain(rightSpeed, -MAX_SPEED, MAX_SPEED);
 
   static int prevLeftSpeed = 0;
   static int prevRightSpeed = 0;
+
+  // // Add debug output FIRST (before motor control logic)
+  // if (leftSpeed != 0 || rightSpeed != 0) {
+  //   Serial.print(">>> MOTOR DEBUG: L=");
+  //   Serial.print(leftSpeed);
+  //   Serial.print(" R=");
+  //   Serial.print(rightSpeed);
+  //   Serial.println(" <<<");
+  // }
 
   // Enforce MIN_MOTOR_SPEED for both forward/reverse and pure turning
   bool sameDirection = (leftSpeed > 0 && rightSpeed > 0) || (leftSpeed < 0 && rightSpeed < 0);
@@ -477,6 +541,26 @@ void beep(bool isActive)
   }
 }
 
+void successBeep()
+{
+  tone(BUZZER_PIN, 2000, 100);
+  delay(150); // Short delay between beeps
+  tone(BUZZER_PIN, 2000, 100);
+  delay(150);
+  noTone(BUZZER_PIN);
+}
+
+void failBeep()
+{
+  tone(BUZZER_PIN, 1000, 100);
+  delay(150);
+  tone(BUZZER_PIN, 1000, 100);
+  delay(150);
+  tone(BUZZER_PIN, 1000, 100);
+  delay(150);
+  noTone(BUZZER_PIN);
+}
+
 // Entertainer melody function (simplified for space)
 bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt)
 {
@@ -486,7 +570,6 @@ bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt)
 
 void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 {
-
   static bool isFirstReport = true;
   if (isFirstReport)
   {
@@ -496,12 +579,11 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
     isFirstReport = false;
   }
 
-  // // Radio status
-  // Serial.print("NRF Data:");
-  // Serial.print(isRead ? " YES" : "  NO");
-  // Serial.print(" | Success:");
-  // Serial.print(pad3f((int)(rxData.successRate / 255.0 * 100.0)));
-  // Serial.print("%");
+  // Radio status
+  if (!isRead)
+  {
+    Serial.print(" | *** NO SIGNAL *** | ");
+  }
 
   // Current joystick values
   Serial.print(" | JS X:");
@@ -510,9 +592,12 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   Serial.print(pad4s(joystickY));
   Serial.print(" Btn:");
   Serial.print(joystickButton ? " ON" : "OFF");
+  Serial.print(" | Cal X:");
+  Serial.print(pad4s(xCenter));
+  Serial.print(" Y:");
+  Serial.print(pad4s(yCenter));
 
   // Motor speeds
-  // use global lastOutputLeft, lastOutputRight
   Serial.print(" | Motors L:");
   Serial.print(pad4s(mt.targetLeft));
   Serial.print(" R:");
@@ -572,28 +657,10 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   Serial.print(pad5f(map(rxData.voltage, 0, 255, 0, MAX_ADC_VALUE)));
   Serial.print(")");
 
-  // // Memory
-  // extern int __heap_start, *__brkval;
-  // int v;
-  // int freeMemory = (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-  // Serial.print(" | Mem:");
-  // Serial.print(pad4s(freeMemory));
-
-  // // System uptime
-  // unsigned long uptimeMs = millis();
-  // unsigned long uptimeSec = uptimeMs / 1000;
-  // unsigned long uptimeMin = uptimeSec / 60;
-  // Serial.print(" | Up:");
-  // Serial.print(pad2s(uptimeMin));
-  // Serial.print("m");
-  // Serial.print(pad2s(uptimeSec % 60));
-  // Serial.print("s");
-
   Serial.println("");
 }
 
 // Function to handle voltage reading with averaging and spike/drop detection
-// Returns true if a new reading was taken, false if still waiting for timing
 bool updateVoltageReading(RxData &rxData)
 {
   static unsigned long lastVoltageReading = 0;
@@ -619,18 +686,17 @@ bool updateVoltageReading(RxData &rxData)
   {
     int16_t deviation = (int16_t)voltageRaw - (int16_t)lastStableReading;
     if (abs(deviation) > 80)
-    { // ~0.25V change threshold
+    {
       consecutiveOutliers++;
       if (consecutiveOutliers >= 3)
       {
-        // 3 consecutive outliers = probably real voltage change
         useReading = true;
-        consecutiveOutliers = 0; // Reset counter
+        consecutiveOutliers = 0;
         Serial.println("Persistent voltage change detected - accepting");
       }
       else
       {
-        useReading = false; // Still filtering as noise
+        useReading = false;
         Serial.print("Voltage spike/drop detected (");
         Serial.print(consecutiveOutliers);
         Serial.print("/3): ");
@@ -639,7 +705,7 @@ bool updateVoltageReading(RxData &rxData)
     }
     else
     {
-      consecutiveOutliers = 0; // Reset counter for normal readings
+      consecutiveOutliers = 0;
     }
   }
 
@@ -647,7 +713,6 @@ bool updateVoltageReading(RxData &rxData)
 
   if (useReading)
   {
-    // Good reading - store in buffer and calculate average
     voltageBuffer[bufferIndex] = voltageRaw;
     bufferIndex = (bufferIndex + 1) % 4;
     if (bufferIndex == 0)
@@ -664,16 +729,53 @@ bool updateVoltageReading(RxData &rxData)
   }
   else
   {
-    // Bad reading - use previous stable value, don't update buffer
     averagedRaw = lastStableReading;
   }
 
-  // Convert to 8-bit and store
   uint8_t voltage8bit = map(averagedRaw, 0, MAX_ADC_VALUE, 0, 255);
   rxData.voltage = voltage8bit;
 
   firstReading = false;
   lastVoltageReading = millis();
 
-  return true; // New reading was taken
+  return true;
+}
+
+// Try to read a calibration packet if requested
+bool tryReadCalibrationPacket()
+{
+  static unsigned long calibrationStart = millis();
+  static bool calibrationTimedOut = false;
+  const unsigned long CALIBRATION_TIMEOUT_MS = 2000;
+
+  if (!calibrationTimedOut && rxData.request == RXREQ_REQUEST_CALIBRATION)
+  {
+    if (radio && radio->available())
+    {
+      if (radio->getDynamicPayloadSize() == sizeof(CalibrationPacket))
+      {
+        CalibrationPacket calib;
+        radio->read(&calib, sizeof(CalibrationPacket));
+        uint8_t expected = calcCalibrationChecksum(calib.xCenter, calib.yCenter);
+        if (calib.checksum == expected)
+        {
+          xCenter = calib.xCenter;
+          yCenter = calib.yCenter;
+          rxData.request = RXREQ_NONE;
+          Serial.print("Calibration received: xCenter=");
+          Serial.print(xCenter);
+          Serial.print(", yCenter=");
+          Serial.println(yCenter);
+          return true;
+        }
+      }
+    }
+    if (millis() - calibrationStart > CALIBRATION_TIMEOUT_MS)
+    {
+      rxData.request = RXREQ_NONE;
+      calibrationTimedOut = true;
+      Serial.println("Calibration request timed out. Using default center values.");
+    }
+  }
+  return false;
 }

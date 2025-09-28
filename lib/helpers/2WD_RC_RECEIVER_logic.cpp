@@ -189,7 +189,9 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     int lrPercent = calculateLeftRightPercent(js.rawX);
     
     // Handle center/deadzone case first - use raw joystick values for consistency with existing tests
-    bool joystickCentered = (abs(js.rawX - JOYSTICK_CENTER) < JOYSTICK_DEADZONE && abs(js.rawY - JOYSTICK_CENTER) < JOYSTICK_DEADZONE);
+    int16_t xDelta = (int16_t)js.rawX - (int16_t)xCenter;
+    int16_t yDelta = (int16_t)js.rawY - (int16_t)yCenter;
+    bool joystickCentered = (abs(xDelta) < JOYSTICK_DEADZONE && abs(yDelta) < JOYSTICK_DEADZONE);
     if (joystickCentered || (throttlePercent == 0 && lrPercent == 0))
     {
         mt.targetLeft = 0;
@@ -266,11 +268,11 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
         if (throttlePercent == -100) baseSpeed = -MAX_SPEED;
         // Remove any capping at -25
         if (baseSpeed > -MIN_MOTOR_SPEED && baseSpeed < 0) baseSpeed = -MIN_MOTOR_SPEED;
-    } else if (throttlePercent == 0 && abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+    } else if (throttlePercent == 0 && abs(js.rawY - yCenter) > JOYSTICK_DEADZONE) {
         // Edge of deadzone: minimal movement in detected direction
-        if (js.rawY > JOYSTICK_CENTER) {
+        if (js.rawY > yCenter) {
             baseSpeed = MIN_MOTOR_SPEED;
-        } else if (js.rawY < JOYSTICK_CENTER) {
+        } else if (js.rawY < yCenter) {
             baseSpeed = -MIN_MOTOR_SPEED;
         }
     }
@@ -294,26 +296,26 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             turnScale = TURN_INTENSITY_FACTOR - 0.2f; // Less responsive at high speed
         }
         turnAdjustment = (int)(abs(baseSpeed) * turnIntensity * turnScale);
-    } else if (lrPercent == 0 && abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+    } else if (lrPercent == 0 && abs(js.rawX - xCenter) > JOYSTICK_DEADZONE) {
         // Edge of deadzone turning: minimal turn adjustment for gentle steering
-        float rawTurnIntensity = abs(js.rawX - JOYSTICK_CENTER) / (float)JOYSTICK_CENTER;
+        float rawTurnIntensity = abs(xDelta) / (float)xCenter;
         turnAdjustment = max((int)(abs(baseSpeed) * rawTurnIntensity * TURN_INTENSITY_FACTOR), MIN_MOTOR_SPEED / 2); // Ensure some movement
     }
     
     // Handle edge cases where we're outside deadzone but transmitter gives 0%
-    bool outsideDeadzone = (abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE || abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE);
+    bool outsideDeadzone = (abs(xDelta) > JOYSTICK_DEADZONE || abs(yDelta) > JOYSTICK_DEADZONE);
     
     if (outsideDeadzone && baseSpeed == 0 && turnAdjustment == 0) {
         // Force minimal movement for edge of deadzone
-        if (abs(js.rawY - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
-            baseSpeed = (js.rawY > JOYSTICK_CENTER) ? MIN_MOTOR_SPEED : -MIN_MOTOR_SPEED;
+        if (abs(yDelta) > JOYSTICK_DEADZONE) {
+            baseSpeed = (yDelta > 0) ? MIN_MOTOR_SPEED : -MIN_MOTOR_SPEED;
         }
-        if (abs(js.rawX - JOYSTICK_CENTER) > JOYSTICK_DEADZONE) {
+        if (abs(xDelta) > JOYSTICK_DEADZONE) {
             turnAdjustment = MIN_MOTOR_SPEED / 2;
         }
     }
-    
-    if (lrPercent < 0 || (lrPercent == 0 && js.rawX < JOYSTICK_CENTER - JOYSTICK_DEADZONE)) { // Left turn (negative LR)
+
+    if (lrPercent < 0 || (lrPercent == 0 && js.rawX < xCenter - JOYSTICK_DEADZONE)) { // Left turn (negative LR)
         if (baseSpeed >= 0) {
             mt.targetLeft = baseSpeed - turnAdjustment;
             mt.targetRight = baseSpeed;
@@ -327,7 +329,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
                 mt.targetRight = -MIN_MOTOR_SPEED;
             }
         }
-    } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > JOYSTICK_CENTER + JOYSTICK_DEADZONE)) { // Right turn (positive LR)
+    } else if (lrPercent > 0 || (lrPercent == 0 && js.rawX > xCenter + JOYSTICK_DEADZONE)) { // Right turn (positive LR)
         if (baseSpeed >= 0) {
             mt.targetLeft = baseSpeed;
             mt.targetRight = baseSpeed - turnAdjustment;
@@ -428,25 +430,17 @@ bool shouldApplyBraking(int prevLeft, int prevRight, int targetLeft, int targetR
 JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joystickButton)
 {
     JoystickProcessingResult js;
-
-    // Keep raw values throughout - no conversion needed
-    js.rawX = joystickX; // 0-MAX_ADC_VALUE, center = 512
-    js.rawY = joystickY; // 0-MAX_ADC_VALUE, center = 512
-
+    js.rawX = joystickX;
+    js.rawY = joystickY;
+    int16_t xDelta = (int16_t)js.rawX - (int16_t)xCenter;
+    int16_t yDelta = (int16_t)js.rawY - (int16_t)yCenter;
     js.buzzerOn = joystickButton;
-
-    // Raw turning ratio based on deviation from center (512)
-    js.rawRatioLR = ((float)(js.rawX - JOYSTICK_CENTER)) / 512.0f;
+    js.rawRatioLR = ((float)xDelta) / 512.0f;
     js.rawRatioLR = constrain(js.rawRatioLR, -1.0f, 1.0f);
-
-    const float quantizeStep = 0.05f; // value if which steppedRatioLR is quantized / rounded to
-    
+    const float quantizeStep = 0.05f;
     if (js.rawRatioLR > 0)
-        js.steppedRatioLR = ceil(js.rawRatioLR / quantizeStep) * quantizeStep;  // round up for positive values (to favor turning)  
+        js.steppedRatioLR = ceil(js.rawRatioLR / quantizeStep) * quantizeStep;
     else
         js.steppedRatioLR = floor(js.rawRatioLR / quantizeStep) * quantizeStep;
-
-    // Debug output for diagnosis
-
     return js;
 }

@@ -58,10 +58,11 @@ struct JoystickInput {
 struct JoystickProcessingResult {
     float rawRatioLR;
     float steppedRatioLR;
-    int rawX;         // Raw joystick X (0-1023, center = 512)
-    int rawY;         // Raw joystick Y (0-1023, center = 512)
+    uint16_t rawX;         // Raw joystick X (0-1023, center = 512)
+    uint16_t rawY;         // Raw joystick Y (0-1023, center = 512)
     bool buzzerOn;
 };
+
 
 struct MotorTargets {
     int targetLeft;         // Target left speed (raw, before slew/brake)
@@ -72,12 +73,47 @@ struct MotorTargets {
     bool brakingApplied;
 };
 
+// Request types for receiver-to-transmitter communication
+enum RxRequestType : uint8_t {
+    RXREQ_NONE = 0,
+    RXREQ_REQUEST_CALIBRATION = 1,
+    // Add more request types as needed
+};
+
+// Packet structures - MUST MATCH TRANSMITTER EXACTLY
+struct __attribute__((packed)) JoystickData {
+    uint16_t xValue;
+    uint16_t yValue;
+    uint8_t  buttonPressed; // 0/1
+    uint8_t  checksum;      // simple xor
+};
+static_assert(sizeof(JoystickData) == 6, "JoystickData size mismatch");
+
+// Calibration/config packet structure
+struct __attribute__((packed)) CalibrationPacket {
+    uint16_t xCenter;
+    uint16_t yCenter;
+    uint8_t checksum;
+};
+static_assert(sizeof(CalibrationPacket) == 5, "CalibrationPacket size mismatch");
 
 // Simplified response data for ACK payload - both transmitter and receiver must agree exactly
-struct __attribute__((packed)) RxData
-{
-  uint8_t voltage;     // Battery voltage (0-255)
-  uint8_t successRate; // Rx success rate (0-255)
-  uint8_t status;      // Combined mode + state info
-  uint8_t crc;         // Simple CRC
+struct __attribute__((packed)) RxData {
+    uint8_t voltage;     // Battery voltage (0-255)
+    uint8_t successRate; // Rx success rate (0-255)
+    uint8_t status;      // Combined mode + state info
+    RxRequestType request; // Request type (e.g., calibration)
+    uint8_t crc;         // Simple CRC
+    RxData(uint8_t v = 0, uint8_t sr = 0, uint8_t st = 0, RxRequestType req = RXREQ_NONE, uint8_t c = 0)
+        : voltage(v), successRate(sr), status(st), request(req), crc(c) {}
 };
+static_assert(sizeof(RxData) == 5, "RxData size mismatch");
+
+inline uint8_t calcCalibrationChecksum(uint16_t xCenter, uint16_t yCenter) {
+    uint8_t checksum = 0;
+    checksum ^= (xCenter & 0xFF);
+    checksum ^= ((xCenter >> 8) & 0xFF);
+    checksum ^= (yCenter & 0xFF);
+    checksum ^= ((yCenter >> 8) & 0xFF);
+    return checksum;
+}
