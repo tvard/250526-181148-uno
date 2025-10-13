@@ -73,12 +73,25 @@ struct
 } Serial;
 #endif
 
+// Helper function to apply higher minimum motor speed for one wheel scenarios
+/// @brief Adjusts the motor speed to ensure it exceeds a higher minimum threshold when only one wheel is active.
+/// This helps to provide sufficient torque for movement when only one wheel is powered.
+int applyHigherMinMotorSpeedForOneWheel(int speed)
+{
+    bool isNeeded = (abs(speed) >= MIN_MOTOR_SPEED && abs(speed) < MIN_MOTOR_SPEED + 10);
+
+    if (isNeeded) 
+        return speed + (speed > 0 ? +10 : -10);
+    else 
+        return speed;
+}
+
+
 // Helper function for slew-rate control (formerly lambda in manualMode)
 /// @brief Limits the rate of change between the current and target speed values to ensure smooth acceleration and deceleration.
 /// @param current The current speed value.
 /// @param target The desired target speed value.
 /// @return The new speed value after applying the slew rate limit.
-// Variable slew rate: pass in joystick deflection (0.0-1.0) to select slew rate
 int slewRateLimit(int current, int target, float deflection, unsigned long now, unsigned long& lastSlewUpdate)
 {
     if (now - lastSlewUpdate < SLEW_UPDATE_INTERVAL)
@@ -216,6 +229,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
                 nextLeft = slewRateLimit(nextLeft, 0, 0.0f, now, lastSlewUpdateLeft);
             if (nextRight != 0)
                 nextRight = slewRateLimit(nextRight, 0, 0.0f, now, lastSlewUpdateRight);
+
             mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
             mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
         }
@@ -226,20 +240,32 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     // Serial.println("Throttle: " + String(throttlePercent) + "%, LR: " + String(lrPercent) + "%");
 
     // Pure in-place turn: throttle near zero, high L/R deflection (use raw values for compatibility)
-    if ((abs(throttlePercent) < 30 && abs(lrPercent) >= 30))    
+    if ((abs(throttlePercent) < 30 && abs(lrPercent) > 0))    
     {
         int base_sp = 100;
-        if (lrPercent < 0) // Left turn (negative LR)
-        {
-            mt.targetLeft = -base_sp;
-            mt.targetRight = base_sp;
-        }
-        else // Right turn (positive LR)
+        if (lrPercent > 0) // Right turn (positive LR)
         {
             mt.targetLeft = base_sp;
-            mt.targetRight = -base_sp;
+
+            if (lrPercent >= 90) {
+                mt.skipSlewRate = true;
+                mt.targetRight = -(map(abs(lrPercent), 90, 100,  base_sp - 10, base_sp + 10)); // Sharper turn for extreme deflection
+            }
+            else 
+                mt.targetRight = 0;
         }
-        mt.skipSlewRate = (abs(lrPercent) >= 90);
+        else if (lrPercent < 0) // Left turn (negative LR)
+        {
+            mt.targetRight = base_sp;
+
+            if (lrPercent <= -90) {
+                mt.skipSlewRate = true;
+                mt.targetLeft = -(map(abs(lrPercent), 90, 100,  base_sp - 10, base_sp + 10)); // Sharper turn for extreme deflection
+            } 
+            else 
+                mt.targetLeft = 0;
+        }
+
         if (mt.skipSlewRate) {
             nextLeft = mt.targetLeft;
             nextRight = mt.targetRight;
@@ -249,10 +275,10 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
             if (nextRight != mt.targetRight)
                 nextRight = slewRateLimit(nextRight, mt.targetRight, 0.0f, now, lastSlewUpdateRight);
         }
-        
+
         mt.brakingApplied = false;
-        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? nextLeft : 0;
-        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? nextRight : 0;
+        mt.outputLeft = (abs(nextLeft) >= MIN_MOTOR_SPEED) ? applyHigherMinMotorSpeedForOneWheel(nextLeft) : 0;
+        mt.outputRight = (abs(nextRight) >= MIN_MOTOR_SPEED) ? applyHigherMinMotorSpeedForOneWheel(nextRight) : 0;
 
         return mt;
     }
@@ -374,7 +400,7 @@ MotorTargets computeMotorTargets(const JoystickProcessingResult &js, const Motor
     }
 
     mt.brakingApplied = false;
-    
+
     // Apply minimum speed thresholds
     if (nextLeft > 0 && nextLeft < MIN_MOTOR_SPEED)
         mt.outputLeft = MIN_MOTOR_SPEED;
@@ -433,7 +459,7 @@ JoystickProcessingResult processJoystick(int joystickX, int joystickY, bool joys
     js.rawX = joystickX;
     js.rawY = joystickY;
     int16_t xDelta = (int16_t)js.rawX - (int16_t)xCenter;
-    int16_t yDelta = (int16_t)js.rawY - (int16_t)yCenter;
+    // int16_t yDelta = (int16_t)js.rawY - (int16_t)yCenter;
     js.buzzerOn = joystickButton;
     js.rawRatioLR = ((float)xDelta) / 512.0f;
     js.rawRatioLR = constrain(js.rawRatioLR, -1.0f, 1.0f);

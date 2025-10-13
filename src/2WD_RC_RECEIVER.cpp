@@ -63,6 +63,7 @@ void beep(int duration);
 void beep(bool isActive);
 bool updateVoltageReading(RxData &rxData);
 bool tryReadCalibrationPacket();
+extern int calculateLeftRightPercent(int x);
 
 // Entertainer melody functions
 struct EntertainerState
@@ -556,7 +557,7 @@ void failBeep()
   delay(150);
   tone(BUZZER_PIN, 1000, 100);
   delay(150);
-  tone(BUZZER_PIN, 1000, 100);
+  tone(BUZZER_PIN, 500, 1000);
   delay(150);
   noTone(BUZZER_PIN);
 }
@@ -629,24 +630,8 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
   Serial.print(padString(direction, 6));
 
   // L/R Ratio
-  Serial.print(" Ratio:");
-  if (abs(mt.targetLeft) == 0 && abs(mt.targetRight) == 0)
-  {
-    Serial.print(padString("--", 6));
-  }
-  else if (mt.targetRight == 0)
-  {
-    Serial.print(padString("L-only", 6));
-  }
-  else if (mt.targetLeft == 0)
-  {
-    Serial.print(padString("R-only", 6));
-  }
-  else
-  {
-    float ratio = (float)mt.targetLeft / mt.targetRight;
-    Serial.print(padString(String(ratio), 6));
-  }
+  Serial.print(" L/R PERC:");
+  Serial.print(padString(String(calculateLeftRightPercent(joystickX)), 6));
 
   // Voltage (8bit => to actual voltage)
   Serial.print(" | Bat:");
