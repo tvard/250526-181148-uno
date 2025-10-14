@@ -33,7 +33,9 @@ uint8_t packetIndex = 0;
 
 // Global objects - delay initialization to save startup RAM
 // RF24* radio = nullptr;
+
 RF24* radio = new RF24(NRF_CE_PIN, NRF_CSN_PIN);
+bool radioInitialized = false;
 
 Adafruit_SSD1306* display = nullptr;
 
@@ -184,7 +186,6 @@ void initRadio() {
   Serial.println("Initializing radio...");
   
   // radio = new RF24(NRF_CE_PIN, NRF_CSN_PIN);
-  
   if (radio && radio->begin()) {
     Serial.println("Radio initialized");
     radio->setChannel(RADIO_CHANNEL);
@@ -199,19 +200,12 @@ void initRadio() {
     radio->stopListening();
     radio->flush_rx();
     radio->flush_tx();
-
-    // // Add debug output:
-    // radio->printDetails();
-    // Serial.print("TX writes to: "); 
-    // for(int i=0; i<5; i++) Serial.print((char)addresses[0][i]);
-    // Serial.print(" | TX listens on: ");
-    // for(int i=0; i<5; i++) Serial.print((char)addresses[1][i]);
-    // Serial.println();
-    
+    radioInitialized = true;
     Serial.print("Radio configured. Free memory: ");
     Serial.println(freeMemory());
   } else {
     Serial.println("Radio initialization failed!");
+    radioInitialized = false;
   }
 }
 
@@ -252,8 +246,6 @@ void loop() {
     y = yMax - (y - yMin);      // Proper inversion
     y = constrain(y, 0, 1023);  // Ensure final result is valid
 
-    
-
     JoystickData txData;
     txData.xValue = x;
     txData.yValue = y;
@@ -266,43 +258,48 @@ void loop() {
     lastRawY = rawY;
     lastBtn  = btnPressed;
 
-    bool success = radio->write(&txData, sizeof(JoystickData));
-    txWrites++;
+    if (radioInitialized) {
+      bool success = radio->write(&txData, sizeof(JoystickData));
+      txWrites++;
 
-    if (success) {
-      lastHwAckTime = now;
-      bool gotPayload = false;
-      RxData ackData;
-      while (radio->isAckPayloadAvailable()) {
-        radio->read(&ackData, sizeof(RxData));
-        gotPayload = true;
-      }
+      if (success) {
+        lastHwAckTime = now;
+        bool gotPayload = false;
+        RxData ackData;
+        while (radio->isAckPayloadAvailable()) {
+          radio->read(&ackData, sizeof(RxData));
+          gotPayload = true;
+        }
 
-      if (gotPayload) {
-        uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
-        if (ackData.crc == expectedCrc) {
-          txAckGood++;
-          rxVoltage     = ackData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0f;
-          rxSuccessRate = (float)ackData.successRate / 255.0f;
-          if (ackData.request == RXREQ_REQUEST_CALIBRATION) {
-            display->clearDisplay();
-            display->setCursor(0, 0);
-            display->println("Calibration requested by Rx");
-            display->display();
-            sendCalibReq();
+        if (gotPayload) {
+          uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
+          if (ackData.crc == expectedCrc) {
+            txAckGood++;
+            rxVoltage     = ackData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0f;
+            rxSuccessRate = (float)ackData.successRate / 255.0f;
+            if (ackData.request == RXREQ_REQUEST_CALIBRATION) {
+              display->clearDisplay();
+              display->setCursor(0, 0);
+              display->println("Calibration requested by Rx");
+              display->display();
+              sendCalibReq();
+            }
+            lastAckTime = now;               // payload-based timestamp
+            updatePacketHistory(true);
+          } else {
+            // Payload CRC bad, still count hardware ACK as success
+            updatePacketHistory(true);
           }
-          lastAckTime = now;               // payload-based timestamp
-          updatePacketHistory(true);
         } else {
-          // Payload CRC bad, still count hardware ACK as success
+          // Hardware ACK only (no payload). Count as success for RF quality.
           updatePacketHistory(true);
         }
       } else {
-        // Hardware ACK only (no payload). Count as success for RF quality.
-        updatePacketHistory(true);
+        // No hardware ACK
+        updatePacketHistory(false);
       }
     } else {
-      // No hardware ACK
+      // Radio not initialized, treat as failure
       updatePacketHistory(false);
     }
 
@@ -398,6 +395,7 @@ void updatePacketHistory(bool success) {
 }
 
 float getSuccessRate() {
+  if (!radioInitialized) return 0.0f;
   uint32_t hist = packetHistory;
   int count = 0;
   for (int i = 0; i < PACKET_HISTORY_SIZE; i++) {
