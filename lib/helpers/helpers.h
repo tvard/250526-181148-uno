@@ -8,19 +8,30 @@
 // Constants
 const int MAX_ADC_VALUE    = 1023;  // Maximum ADC value for 10-bit ADC (0-1023 range)
 
-const int LOOP_DELAY_MS = 1;        // how often we run the main loop
-const int JOYSTICK_CENTER = 512;    // Center position of joystick (0-1023 range)
-const int JOYSTICK_DEADZONE = 20;   // deadzone around center based on joystick variance
+const int LOOP_DELAY_MS = 10;           // how often we run the main loop (consider microcontroller speed)
+const int JOYSTICK_CENTER = 512;        // Center position of joystick (0-1023 range)
+const int JOYSTICK_DEADZONE = 20;       // deadzone around center based on joystick variance
+
+const int RADIO_DATA_RATE = 2; // NRF24 data rate - inverse relation to integrity (range vs speed). 0=1Mbps, 1=2Mbps, 2=250kbps
+const int RADIO_CHANNEL = 76;
+const byte RADIO_ADDRESSES[][6] = {"00001", "00002"};
+const int RADIO_RETRY_CONFIG[] = {15, 15}; // {delay, count} - delay and count for retries (max values) to improve reliability
 
 // Voltage Divider Constants (shared between transmitter and receiver)
 // Current configuration: R1 = 276K (3 x 92K), R2 = 100K
 // Arduino: 3.3V/8MHz, ADC reference = 3.29V measured
 const float VOLTAGE_CORRECTION_FACTOR = 12.16f / 11.96f;       // Corrector for Vref tolerance (measured 3.29V vs nominal 3.3V)
 const float VOLTAGE_ADC_REFERENCE = 3.3f;        // Measured ADC reference voltage (3.3V Arduino)
-const float VOLTAGE_DIVIDER_RATIO = VOLTAGE_CORRECTION_FACTOR * (276.0f + 97.5f) / 97.5f; // ≈ 3.831
-const float VOLTAGE_CALIBRATION_BATTERY = 12.6f; // Actual battery voltage when ADC reads maximum
-const float VBATT_MIN = 3.0f;               // Minimum battery voltage (per cell)
-const float VBATT_MAX = 4.2f;               // Maximum battery voltage (per cell)
+const float VOLTAGE_DIVIDER_RATIO_RX = VOLTAGE_CORRECTION_FACTOR * (276.0f + 97.5f) / 97.5f; // R1=276K, R2=100K (actual measured 97.5K)
+
+const float VOLTAGE_DIVIDER_TX_R1 = 294e3f; 
+const float VOLTAGE_DIVIDER_TX_R2 = 1e6f;
+const float VOLTAGE_DIVIDER_RATIO_TX = (VOLTAGE_DIVIDER_TX_R1 + VOLTAGE_DIVIDER_TX_R2) / (VOLTAGE_DIVIDER_TX_R2); // R1=290K, R2=1M ((R1 + R2) / R2)
+const float VOLTAGE_DIVIDER_THEVENIN_TX = VOLTAGE_DIVIDER_TX_R1 * VOLTAGE_DIVIDER_TX_R2 / (VOLTAGE_DIVIDER_TX_R1 + VOLTAGE_DIVIDER_TX_R2);
+const float VOLTAGE_ADC_INPUT_CAPACITANCE_TX = 14e-12f; // 14pF for ATmega328P ADC input (from datasheet - no external cap assumed)
+
+const float VBATT_MIN = 3.0f;               // Minimum battery voltage (per 18650 cell)
+const float VBATT_MAX = 4.2f;               // Maximum battery voltage (per 18650 cell)
     
 const int PACKET_HISTORY_SIZE = 32; // Number of packets to track for success rate
 extern uint32_t packetHistory;

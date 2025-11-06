@@ -3,6 +3,7 @@
 #include <Wire.h>
 #include <SPI.h>
 #include <RF24.h>
+#include <limits.h>
 #endif
 #include "helpers.h"
 #include "pitches.h"
@@ -22,9 +23,7 @@ const int NRF_CE_PIN = 10;      // CE pin
 const int NRF_CSN_PIN = A0;     // CSN pin - works perfectly as digital pin
 const int VOLTAGE_ADC_PIN = A2; // Analog voltage sensing pin
 
-// Radio configuration - MUST MATCH TRANSMITTER
-const int RADIO_CHANNEL = 76;
-const byte addresses[][6] = {"00001", "00002"};
+const int RF_LOST_DELAY = 200; // ms before considering RF lost
 
 // Packet history globals (definition)
 uint32_t packetHistory = 32;
@@ -44,8 +43,9 @@ bool joystickButton = false;
 extern uint16_t xCenter;
 extern uint16_t yCenter;
 
-// Fast slew mode toggle
-bool FAST_SLEW_MODE = false;
+
+bool FAST_SLEW_MODE = false;          // Fast slew mode toggle
+bool motorsDisabledBySerial = false;  // Handshake: disable motors if a character is received from serial monitor
 
 // Function prototypes
 int freeMemory();
@@ -64,25 +64,6 @@ void beep(bool isActive);
 bool updateVoltageReading(RxData &rxData);
 bool tryReadCalibrationPacket();
 extern int calculateLeftRightPercent(int x);
-
-// Entertainer melody functions
-struct EntertainerState
-{
-  int noteIndex = 0;
-  unsigned long phaseStart = 0;
-  int phase = 0;
-  bool playing = false;
-};
-static EntertainerState entertainerState;
-bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt);
-
-// Free memory utility
-int freeMemory()
-{
-  extern int __heap_start, *__brkval;
-  int v;
-  return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
-}
 
 void setup()
 {
@@ -159,16 +140,16 @@ void initRadio()
 
     // Configure radio - FIXED VERSION
     radio->setChannel(RADIO_CHANNEL);
-    radio->setDataRate(RF24_250KBPS);
+    radio->setDataRate(static_cast<rf24_datarate_e>(RADIO_DATA_RATE));
     radio->setPALevel(RF24_PA_HIGH);
     radio->enableDynamicPayloads();
     radio->setAutoAck(true);
     radio->enableAckPayload();
-    radio->setRetries(5, 5);
+    radio->setRetries(RADIO_RETRY_CONFIG[0], RADIO_RETRY_CONFIG[1]);
 
     // FIX: Proper pipe configuration
-    radio->openReadingPipe(0, addresses[0]); // Listen on pipe 0 "00001"
-    radio->openWritingPipe(addresses[1]);    // Not used, but set for consistency
+    radio->openReadingPipe(0, RADIO_ADDRESSES[0]); // Listen on pipe 0 "00001"
+    radio->openWritingPipe(RADIO_ADDRESSES[1]);    // Not used, but set for consistency
     radio->startListening();
 
     // Clear any stale data
@@ -217,23 +198,34 @@ void loop()
     // Update packet history with successful reception
     updatePacketHistory(true);
   }
-  else if (rfLostCounter++ * LOOP_DELAY_MS > 440)
-  { // RF signal lost after ~0.5s
-    setMotorSpeeds(0, 0);
-
-    // Update prevMotorValues to stopped
-    prevMotorValues = {0, 0, 0, 0, false, false};
+  // signal lost handling after certain delay threshold
+  else if (rfLostCounter++ * LOOP_DELAY_MS > RF_LOST_DELAY)
+  {
+    // immediate active braking on RF loss for 100 ms
+    if (rfLostCounter <= 100) {
+      setMotorSpeeds(-mt.outputLeft / 2, -mt.outputRight / 2);
+      mt.brakingApplied = true;
+      Serial.println("*** RF LOSS ***");
+    }
+    // Stop motors after braking period
+    else {
+      setMotorSpeeds(0, 0);
+      mt = {0, 0, 0, 0, false, false};  // Update mt to stopped
+      prevMotorValues = mt;
+    }
 
     // Update packet history with failure
     updatePacketHistory(false);
 
-    rfLostCounter = 441; // Prevent overflow
+    // Prevent overflow - set counter to max (remove if timing rf loss)
+    if (rfLostCounter == INT_MAX)
+      rfLostCounter--;
   }
 
   // Status reporting every n milliseconds
   static unsigned long lastStatusTime = 0;
 
-  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000))
+  if ((millis() - lastStatusTime > 250 && isRead) || (millis() - lastStatusTime > 1000) || (motorsDisabledBySerial && (isRead || millis() - lastStatusTime > 100)))
   {
     // Use last computed MotorTargets for status
     printStatusReport(rxData, isRead, mt);
@@ -398,8 +390,6 @@ float getSuccessRate()
 
 void setMotorSpeeds(int leftSpeed, int rightSpeed)
 {
-  // Handshake: disable motors if a character is received from serial monitor
-  static bool motorsDisabledBySerial = false;
   
 #ifdef ARDUINO
   if (Serial && Serial.available())
@@ -562,13 +552,6 @@ void failBeep()
   noTone(BUZZER_PIN);
 }
 
-// Entertainer melody function (simplified for space)
-bool playEntertainerStep(EntertainerState &state, bool shouldInterrupt)
-{
-  // Your existing implementation
-  return false; // Simplified for this optimization
-}
-
 void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 {
   static bool isFirstReport = true;
@@ -635,7 +618,7 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 
   // Voltage (8bit => to actual voltage)
   Serial.print(" | Bat:");
-  float batteryVoltage = rxData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0;
+  float batteryVoltage = rxData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO_RX) / 255.0;
   Serial.print(pad5f(batteryVoltage));
   Serial.print("V");
   Serial.print(" (ADC: ");
@@ -646,6 +629,31 @@ void printStatusReport(const RxData &rxData, bool isRead, MotorTargets mt)
 }
 
 // Function to handle voltage reading with averaging and spike/drop detection
+// --- Non-blocking voltage read for A2 ---
+volatile int lastVoltageRawA2 = 0;
+volatile bool voltageReadA2Pending = false;
+static uint32_t lastA2SampleTime = 0;
+
+void startVoltageReadA2() {
+  ADMUX = (ADMUX & 0xF0) | (A2 & 0x0F); // set MUX to A2
+  ADCSRA |= (1 << ADSC); // Start conversion
+  voltageReadA2Pending = true;
+  lastA2SampleTime = millis();
+}
+
+bool isVoltageReadA2Ready() {
+  return voltageReadA2Pending && !(ADCSRA & (1 << ADSC));
+}
+
+int getVoltageReadingA2Raw() {
+  if (isVoltageReadA2Ready()) {
+    lastVoltageRawA2 = ADC;
+    voltageReadA2Pending = false;
+    return lastVoltageRawA2;
+  }
+  return -1;
+}
+
 bool updateVoltageReading(RxData &rxData)
 {
   static unsigned long lastVoltageReading = 0;
@@ -662,8 +670,15 @@ bool updateVoltageReading(RxData &rxData)
     return false;
   }
 
-  // Take the ADC reading
-  int voltageRaw = analogRead(VOLTAGE_ADC_PIN);
+  // Enforce 2ms delay between samples
+  if (!voltageReadA2Pending && millis() - lastA2SampleTime >= 2) {
+    startVoltageReadA2();
+  }
+  int voltageRaw = getVoltageReadingA2Raw();
+  if (voltageRaw < 0) {
+    // Not ready yet, use last stable value
+    voltageRaw = lastStableReading;
+  }
   bool useReading = true;
 
   // Check for spikes/drops BEFORE storing in buffer
@@ -763,4 +778,12 @@ bool tryReadCalibrationPacket()
     }
   }
   return false;
+}
+
+// Free memory utility
+int freeMemory()
+{
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int)&v - (__brkval == 0 ? (int)&__heap_start : (int)__brkval);
 }

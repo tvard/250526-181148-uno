@@ -8,7 +8,7 @@
 
 // Radio setup
 RF24 radio(NRF_CE_PIN, NRF_CSN_PIN);
-const byte addresses[][6] = {"00001", "00002"};
+const byte RADIO_ADDRESSES[][6] = {"00001", "00002"};
 const int RADIO_CHANNEL = 76;
 
 // Test packet structure
@@ -79,7 +79,7 @@ void testTransmit() {
   Serial.println("\n--- TRANSMIT MODE ---");
   Serial.println("Sending test packets...");
   
-  radio.openWritingPipe(addresses[0]); // Send to "00001"
+  radio.openWritingPipe(RADIO_ADDRESSES[0]); // Send to "00001"
   radio.stopListening();
   
   int counter = 0;
@@ -107,7 +107,7 @@ void testReceive() {
   Serial.println("\n--- RECEIVE MODE ---");
   Serial.println("Listening for packets...");
   
-  radio.openReadingPipe(0, addresses[0]); // Listen on "00001"
+  radio.openReadingPipe(0, RADIO_ADDRESSES[0]); // Listen on "00001"
   radio.startListening();
   
   unsigned long startTime = millis();

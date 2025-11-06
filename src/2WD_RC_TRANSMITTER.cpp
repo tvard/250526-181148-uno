@@ -24,9 +24,6 @@
 #define SCREEN_ADDRESS 0x3C
 #define OLED_RESET_PIN -1
 
-const int RADIO_CHANNEL = 76;
-const byte addresses[][6] = {"00001", "00002"};
-
 // Packet history globals (definition)
 uint32_t packetHistory = 32;
 uint8_t packetIndex = 0;
@@ -51,6 +48,10 @@ uint16_t xCenter = JOYSTICK_CENTER, yCenter = 494;
 const int16_t RANGE_EXPANSION_FACTOR = 0; // More aggressive range expansion for better joystick response
 
 // Function prototypes
+// Non-blocking ADC read for A5
+void startVoltageReadAdc();
+bool isVoltageReadAdcReady();
+float getVoltageReadingAdc();
 int freeMemory();
 void initDisplay();
 void initRadio();
@@ -66,12 +67,8 @@ void sendCalibReq();
 extern int calculateThrottlePercent(int y);
 extern int calculateLeftRightPercent(int x);
 
-// Free memory utility
-int freeMemory() {
-  extern int __heap_start, *__brkval;
-  int v;
-  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
-}
+// --- Non-blocking voltage read for ADC ---
+volatile int lastVoltageRawAdc = 0;
 
 void setup() {
   Serial.begin(9600);
@@ -189,14 +186,14 @@ void initRadio() {
   if (radio && radio->begin()) {
     Serial.println("Radio initialized");
     radio->setChannel(RADIO_CHANNEL);
-    radio->setDataRate(RF24_250KBPS);
+    radio->setDataRate(static_cast<rf24_datarate_e>(RADIO_DATA_RATE));
     radio->setPALevel(RF24_PA_HIGH);           // Changed from HIGH to test
     radio->enableDynamicPayloads();
     radio->setAutoAck(true);                  // Re-enable ACK
     radio->enableAckPayload();                // Enable ACK payloads
-    radio->setRetries(5, 5);                  // Restore retries
-    radio->openReadingPipe(1, addresses[1]);
-    radio->openWritingPipe(addresses[0]);     // Write on address "00001"
+    radio->setRetries(RADIO_RETRY_CONFIG[0], RADIO_RETRY_CONFIG[1]);
+    radio->openReadingPipe(1, RADIO_ADDRESSES[1]);
+    radio->openWritingPipe(RADIO_ADDRESSES[0]);     // Write on address "00001"
     radio->stopListening();
     radio->flush_rx();
     radio->flush_tx();
@@ -260,7 +257,7 @@ void loop() {
 
     if (radioInitialized) {
       bool success = radio->write(&txData, sizeof(JoystickData));
-      txWrites++;
+      txWrites = (txWrites >= 50) ? 0 : (txWrites + 1);
 
       if (success) {
         lastHwAckTime = now;
@@ -274,8 +271,8 @@ void loop() {
         if (gotPayload) {
           uint8_t expectedCrc = (ackData.voltage ^ ackData.status) & 0xFF;
           if (ackData.crc == expectedCrc) {
-            txAckGood++;
-            rxVoltage     = ackData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO) / 255.0f;
+            txAckGood = (txWrites >= 50) ? 0 : (txAckGood + 1);
+            rxVoltage     = ackData.voltage * (VOLTAGE_ADC_REFERENCE * VOLTAGE_DIVIDER_RATIO_RX) / 255.0f;
             rxSuccessRate = (float)ackData.successRate / 255.0f;
             if (ackData.request == RXREQ_REQUEST_CALIBRATION) {
               display->clearDisplay();
@@ -312,9 +309,23 @@ void loop() {
 
   // Display update
   static uint32_t lastDisplay = 0;
+  static float lastAdcVoltage = 0.0f;
+  static uint32_t lastAdcSampleTime = 0;
+  static float txVoltage = 0.0f;
+  static float txSuccessRate = 0.0f;
+
+  // Enforce (n)ms delay between samples
+  if (millis() - lastAdcSampleTime >= 5.0f * 1e3) {
+    analogRead(VOLTAGE_SENSOR_PIN);   // Dummy read to switch MUX to correct pin (influenced by previous read on another channel)
+    delayMicroseconds(5.0f * VOLTAGE_DIVIDER_THEVENIN_TX * VOLTAGE_ADC_INPUT_CAPACITANCE_TX * 1.0e6f); // t(delay) ~ 5 x R(src) * C(adc) * 1e6 to convert to μs
+    lastVoltageRawAdc = analogRead(VOLTAGE_SENSOR_PIN);
+    lastAdcVoltage = lastVoltageRawAdc * (3.3f / 1023.0f); // Convert adc to raw voltage
+    lastAdcSampleTime = millis();
+  }
+
   if (displayReady && millis() - lastDisplay > 200) {
-    float txVoltage = analogRead(VOLTAGE_SENSOR_PIN) * 5.0f / (float)MAX_ADC_VALUE + 0.04f;
-    float txSuccessRate = getSuccessRate();
+    txVoltage = lastAdcVoltage * VOLTAGE_DIVIDER_RATIO_TX;
+    txSuccessRate = getSuccessRate();
     displayInfo(lastTxData.xValue, lastTxData.yValue, lastTxData.buttonPressed,
                 txVoltage, rxVoltage, txSuccessRate, rxSuccessRate);
     lastDisplay = millis();
@@ -325,7 +336,7 @@ void loop() {
     if (millis() - lastMemReport > 250) {
       bool payloadTimedOut = (millis() - lastAckTime > 500);
       bool hwTimedOut = (millis() - lastHwAckTime > 300);
-      Serial.print("TX Success Rate: "); Serial.print(getSuccessRate() * 100); Serial.print("% | ");
+      Serial.print("TX Success Rate: "); Serial.print(txSuccessRate * 100); Serial.print("% | ");
       Serial.print("ACK Rx: ");
       Serial.print(hwTimedOut ? "*No HW ACK*" : (payloadTimedOut ? "No Payload" : "Payload OK")); Serial.print(" | ");
       Serial.print("X: "); Serial.print(lastTxData.xValue);
@@ -333,16 +344,11 @@ void loop() {
       Serial.print("Y: "); Serial.print(lastTxData.yValue);
       Serial.print(" (ADC: "); Serial.print(lastRawY); Serial.print(") | ");
       Serial.print("Btn: "); Serial.print(lastBtn ? "Pressed" : "Released"); Serial.print(" | ");
+      Serial.print("TX V: "); Serial.print(txVoltage); Serial.print(" ("); Serial.print(lastVoltageRawAdc); Serial.print(") | ");
       Serial.print("RX V: "); Serial.print(rxVoltage); Serial.print(" | ");
-      Serial.print("Writes: "); Serial.print(txWrites); Serial.print(" AckOK: "); Serial.print(txAckGood);
+      Serial.print("Writes: "); Serial.print(txWrites); Serial.print(" AckOK: "); Serial.print(txAckGood); 
+      Serial.print(" ("); Serial.print((txWrites > 0) ? (txAckGood * 100 / txWrites) : 0); Serial.print("%) ");
       // Serial.print(" ST=0x"); Serial.print((radio->getStatusFlags()), HEX);
-      
-      // Add these lines for proper status debugging:
-      bool tx_ok, tx_fail, rx_ready;
-      radio->whatHappened(tx_ok, tx_fail, rx_ready);
-      Serial.print(" TX_OK="); Serial.print(tx_ok);
-      Serial.print(" TX_FAIL="); Serial.print(tx_fail);
-      Serial.print(" RX_RDY="); Serial.print(rx_ready);
       
       Serial.println();
       lastMemReport = millis();
@@ -358,7 +364,6 @@ void sendCalibReq() {
   calib.checksum = calcCalibrationChecksum(calib.xCenter, calib.yCenter);
 
   // Briefly slow normal traffic
-  uint32_t start = millis();
   for (int i = 0; i < 3; ++i) {
     radio->write(&calib, sizeof(CalibrationPacket));
     delay(8);
@@ -385,11 +390,14 @@ void sendCalibReq() {
   return checksum;
 }
 
+/**
+ * Updates packetHistory by marking the current packetIndex as success (sets bit) or fail (clears bit).
+ */
 void updatePacketHistory(bool success) {
   if (success) {
-    packetHistory |= (1UL << packetIndex);
+    packetHistory |= (1UL << packetIndex);  // set bit for success
   } else {
-    packetHistory &= ~(1UL << packetIndex);
+    packetHistory &= ~(1UL << packetIndex); // clear bit for failure
   }
   packetIndex = (packetIndex + 1) % PACKET_HISTORY_SIZE;
 }
@@ -529,4 +537,11 @@ void drawBattery(float voltage, int barX, int barY, int barW, float maxVoltage, 
 
   display->setCursor(barX + offsetX + (barW + 2), barY);
   display->print(suffix); // tx, rx...
+}
+
+// Free memory utility
+int freeMemory() {
+  extern int __heap_start, *__brkval;
+  int v;
+  return (int) &v - (__brkval == 0 ? (int) &__heap_start : (int) __brkval);
 }
